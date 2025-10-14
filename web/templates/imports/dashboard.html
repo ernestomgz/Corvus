@@ -1,0 +1,80 @@
+{% extends 'base.html' %}
+{% block title %}Imports | Corvus{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-4xl space-y-6">
+    <h1 class="text-2xl font-semibold">Import Content</h1>
+    <div class="grid gap-6 md:grid-cols-2">
+        <section class="rounded border bg-white p-6 shadow">
+            <h2 class="text-lg font-semibold mb-4">Markdown / Logseq</h2>
+            <form method="post" action="{% url 'imports:markdown' %}" enctype="multipart/form-data">
+                {% csrf_token %}
+                <div class="mb-4">
+                    {{ markdown_form.deck.label_tag }}
+                    {{ markdown_form.deck }}
+                    {% if markdown_form.deck.errors %}
+                        <p class="text-sm text-red-600">{{ markdown_form.deck.errors.0 }}</p>
+                    {% endif %}
+                </div>
+                <div class="mb-4">
+                    {{ markdown_form.archive.label_tag }}
+                    {{ markdown_form.archive }}
+                    {% if markdown_form.archive.errors %}
+                        <p class="text-sm text-red-600">{{ markdown_form.archive.errors.0 }}</p>
+                    {% endif %}
+                </div>
+                <button type="submit" class="rounded bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700">Upload</button>
+            </form>
+        </section>
+        <section class="rounded border bg-white p-6 shadow">
+            <h2 class="text-lg font-semibold mb-4">Anki .apkg</h2>
+            <form method="post" action="{% url 'imports:anki' %}" enctype="multipart/form-data">
+                {% csrf_token %}
+                <div class="mb-4">
+                    {{ anki_form.deck.label_tag }}
+                    {{ anki_form.deck }}
+                    {% if anki_form.deck.errors %}
+                        <p class="text-sm text-red-600">{{ anki_form.deck.errors.0 }}</p>
+                    {% endif %}
+                </div>
+                <div class="mb-4">
+                    {{ anki_form.package.label_tag }}
+                    {{ anki_form.package }}
+                    {% if anki_form.package.errors %}
+                        <p class="text-sm text-red-600">{{ anki_form.package.errors.0 }}</p>
+                    {% endif %}
+                </div>
+                <button type="submit" class="rounded bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700">Upload</button>
+            </form>
+        </section>
+    </div>
+    <section class="rounded border bg-white p-6 shadow">
+        <h2 class="text-lg font-semibold mb-4">Recent Imports</h2>
+        <table class="min-w-full divide-y divide-gray-200 text-sm">
+            <thead class="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                <tr>
+                    <th class="px-4 py-2">When</th>
+                    <th class="px-4 py-2">Kind</th>
+                    <th class="px-4 py-2">Status</th>
+                    <th class="px-4 py-2">Summary</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+                {% for imp in imports %}
+                    <tr>
+                        <td class="px-4 py-2 text-gray-600">{{ imp.created_at|date:'Y-m-d H:i' }}</td>
+                        <td class="px-4 py-2 text-gray-700">{{ imp.get_kind_display|default:imp.kind }}</td>
+                        <td class="px-4 py-2 text-gray-700">{{ imp.get_status_display|default:imp.status }}</td>
+                        <td class="px-4 py-2 text-gray-500 text-xs">
+                            <pre class="whitespace-pre-wrap">{{ imp.summary }}</pre>
+                        </td>
+                    </tr>
+                {% empty %}
+                    <tr>
+                        <td colspan="4" class="px-4 py-6 text-center text-gray-500">No imports yet.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+</div>
+{% endblock %}

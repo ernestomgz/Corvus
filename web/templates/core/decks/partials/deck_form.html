@@ -1,0 +1,18 @@
+{% csrf_token %}
+<div class="grid gap-3">
+    <div>
+        {{ form.name.label_tag }}
+        {{ form.name }}
+        {% if form.name.errors %}
+            <p class="text-sm text-red-600">{{ form.name.errors.0 }}</p>
+        {% endif %}
+    </div>
+    <div>
+        {{ form.description.label_tag }}
+        {{ form.description }}
+        {% if form.description.errors %}
+            <p class="text-sm text-red-600">{{ form.description.errors.0 }}</p>
+        {% endif %}
+    </div>
+    <button type="submit" class="inline-flex items-center justify-center rounded bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700">Save</button>
+</div>

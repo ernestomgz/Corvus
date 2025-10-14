@@ -1,0 +1,36 @@
+<table class="min-w-full divide-y divide-gray-200 overflow-hidden rounded border bg-white shadow">
+    <thead class="bg-gray-50">
+        <tr class="text-left text-sm font-semibold text-gray-600">
+            <th class="px-4 py-3">Deck</th>
+            <th class="px-4 py-3">Front</th>
+            <th class="px-4 py-3">Tags</th>
+            <th class="px-4 py-3">Queue</th>
+            <th class="px-4 py-3">Due</th>
+            <th class="px-4 py-3"></th>
+        </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-100 text-sm">
+        {% for card in cards %}
+            <tr>
+                <td class="px-4 py-3 font-medium text-gray-800">{{ card.deck.name }}</td>
+                <td class="px-4 py-3 text-gray-700">{{ card.front_md|truncatechars:80 }}</td>
+                <td class="px-4 py-3 text-gray-500">
+                    {% for tag in card.tags %}
+                        <span class="mr-1 inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs text-indigo-600">{{ tag }}</span>
+                    {% empty %}
+                        <span class="text-gray-400">-</span>
+                    {% endfor %}
+                </td>
+                <td class="px-4 py-3 text-gray-500">{{ card.scheduling_state.queue_status|default:'?' }}</td>
+                <td class="px-4 py-3 text-gray-500">{{ card.scheduling_state.due_at|date:'Y-m-d H:i' }}</td>
+                <td class="px-4 py-3 text-right">
+                    <a href="{% url 'cards:detail' card.id %}" class="rounded border border-slate-200 px-3 py-1 text-xs text-slate-600 hover:bg-slate-50">View</a>
+                </td>
+            </tr>
+        {% empty %}
+            <tr>
+                <td colspan="6" class="px-4 py-6 text-center text-gray-500">No cards match your filters yet.</td>
+            </tr>
+        {% endfor %}
+    </tbody>
+</table>

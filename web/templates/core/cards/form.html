@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+{% block title %}Card Form | Corvus{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-3xl">
+    <div class="rounded border bg-white p-6 shadow">
+        <h1 class="text-2xl font-semibold mb-4">{% if card %}Edit Card{% else %}Create Card{% endif %}</h1>
+        <form method="post">
+            {% csrf_token %}
+            <div class="grid gap-4">
+                <div>
+                    {{ form.deck.label_tag }}
+                    {{ form.deck }}
+                    {% if form.deck.errors %}
+                        <p class="text-sm text-red-600">{{ form.deck.errors.0 }}</p>
+                    {% endif %}
+                </div>
+                <div>
+                    {{ form.card_type.label_tag }}
+                    {{ form.card_type }}
+                    {% if form.card_type.errors %}
+                        <p class="text-sm text-red-600">{{ form.card_type.errors.0 }}</p>
+                    {% endif %}
+                </div>
+                <div>
+                    {{ form.front_md.label_tag }}
+                    {{ form.front_md }}
+                </div>
+                <div>
+                    {{ form.back_md.label_tag }}
+                    {{ form.back_md }}
+                </div>
+                <div>
+                    {{ form.tags.label_tag }}
+                    {{ form.tags }}
+                    <p class="text-xs text-gray-500">Comma separated</p>
+                </div>
+                <div class="flex gap-3">
+                    <button type="submit" class="rounded bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700">Save</button>
+                    <a href="{% url 'cards:list' %}" class="rounded border border-slate-200 px-4 py-2 text-slate-600 hover:bg-slate-50">Cancel</a>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

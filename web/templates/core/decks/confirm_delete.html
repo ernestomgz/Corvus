@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block title %}Delete Deck | Corvus{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-xl">
+    <div class="space-y-4 rounded border bg-white p-6 shadow">
+        <h1 class="text-xl font-semibold text-red-600">Delete Deck</h1>
+        <p>Are you sure you want to delete <strong>{{ deck.name }}</strong>? This will remove all cards in the deck.</p>
+        <form method="post" class="flex flex-wrap gap-3">
+            {% csrf_token %}
+            <button type="submit" class="rounded bg-red-600 px-4 py-2 text-white hover:bg-red-700">Delete</button>
+            <a href="{% url 'decks:list' %}" class="rounded border border-slate-200 px-4 py-2 text-slate-600 hover:bg-slate-50">Cancel</a>
+        </form>
+    </div>
+</div>
+{% endblock %}

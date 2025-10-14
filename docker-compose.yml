@@ -1,0 +1,33 @@
+version: '3.9'
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-corvus}
+      POSTGRES_USER: ${POSTGRES_USER:-corvus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-corvus}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  web:
+    build: ./web
+    command: ["/start.sh"]
+    volumes:
+      - ./web:/app
+      - media:/app/media
+      - imports_tmp:/app/imports_tmp
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+
+volumes:
+  pgdata:
+  media:
+  imports_tmp:

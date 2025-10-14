@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+{% block title %}Decks | Corvus{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-4xl space-y-8">
+    <div class="flex items-center justify-between">
+        <h1 class="text-2xl font-semibold">Your Decks</h1>
+        <a href="{% url 'review:today' %}" class="rounded bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700">Review Today</a>
+    </div>
+    <div class="rounded border bg-white p-6 shadow">
+        <h2 class="text-lg font-semibold mb-4">Create Deck</h2>
+        <form method="post" action="{% url 'decks:create' %}" hx-post="{% url 'decks:create' %}" hx-target="#deck-list" hx-swap="innerHTML">
+            {% include 'core/decks/partials/deck_form.html' %}
+        </form>
+    </div>
+    <div class="rounded border bg-white p-6 shadow">
+        <h2 class="text-lg font-semibold mb-4">Decks</h2>
+        <div id="deck-list">
+            {% include 'core/decks/partials/deck_list.html' %}
+        </div>
+    </div>
+</div>
+{% endblock %}
