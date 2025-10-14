@@ -7,4 +7,6 @@ pytest>=7.4
 pytest-django>=4.8
 factory_boy>=3.3
 pytest-factoryboy>=2.6
-markdown-it-py>=3.0\nmdit-py-plugins>=0.4\nbleach>=6.1
+markdown-it-py>=3.0
+mdit-py-plugins>=0.4
+bleach>=6.1

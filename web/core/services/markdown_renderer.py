@@ -5,7 +5,7 @@ from functools import lru_cache
 
 import bleach
 from markdown_it import MarkdownIt
-from mdit_py_plugins.dollarmath import dollarmath
+from mdit_py_plugins.dollarmath import dollarmath_plugin
 
 
 _MATH_BLOCK_PATTERN = re.compile(r"\[\$\$](?P<body>.+?)\[/\$\$]", re.DOTALL)
@@ -34,12 +34,14 @@ _ALLOWED_ATTRIBUTES = {
 
 _ALLOWED_PROTOCOLS = ['http', 'https', 'data']
 
+_MATH_PLUGIN_OPTIONS = {'allow_inline': True, 'allow_display': True}
+
 _markdown = (
     MarkdownIt('commonmark', {'html': True, 'linkify': True, 'breaks': True})
     .enable('table')
     .enable('strikethrough')
 )
-_markdown.use(dollarmath, allow_inline=True, allow_display=True)
+_markdown.use(dollarmath_plugin, MATH_PLUGIN_OPTIONS)
 
 
 def _normalise_legacy_math(text: str) -> str:
