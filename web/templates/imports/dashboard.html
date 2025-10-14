@@ -47,6 +47,29 @@
             </form>
         </section>
     </div>
+    {% if sessions %}
+    <section class="rounded border bg-white p-6 shadow">
+        <h2 class="text-lg font-semibold mb-4">Pending Markdown Imports</h2>
+        <ul class="space-y-3">
+            {% for session in sessions %}
+                <li class="flex flex-wrap items-center justify-between gap-3 rounded border border-indigo-100 bg-indigo-50 px-4 py-3">
+                    <div>
+                        <p class="text-sm font-medium text-indigo-800">{{ session.source_name|default:'Uploaded archive' }}</p>
+                        <p class="text-xs text-indigo-600">Created {{ session.created_at|date:'Y-m-d H:i' }}</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <a href="{% url 'imports:markdown-preview' session.id %}" class="rounded border border-indigo-200 px-3 py-1 text-sm text-indigo-600 hover:bg-indigo-100">Review</a>
+                        <form method="post" action="{% url 'imports:markdown-cancel' session.id %}" class="inline">
+                            {% csrf_token %}
+                            <button type="submit" class="rounded border border-gray-200 px-3 py-1 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+                        </form>
+                    </div>
+                </li>
+            {% endfor %}
+        </ul>
+    </section>
+    {% endif %}
+
     <section class="rounded border bg-white p-6 shadow">
         <h2 class="text-lg font-semibold mb-4">Recent Imports</h2>
         <table class="min-w-full divide-y divide-gray-200 text-sm">

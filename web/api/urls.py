@@ -5,6 +5,8 @@ from . import views
 app_name = 'api'
 
 urlpatterns = [
+    path('analytics/heatmap/', views.analytics_heatmap_summary, name='analytics-heatmap'),
+    path('analytics/heatmap/<str:date_str>/', views.analytics_heatmap_day, name='analytics-heatmap-day'),
     path('auth/register', views.auth_register, name='auth-register'),
     path('auth/login', views.auth_login, name='auth-login'),
     path('auth/logout', views.auth_logout, name='auth-logout'),

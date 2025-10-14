@@ -17,6 +17,8 @@ from django.db import transaction
 from django.utils import timezone
 
 from core.models import Card, Deck, ExternalId, Import
+from core.services.cards import infer_card_type
+from core.services.decks import ensure_deck_path
 from core.scheduling import ensure_state, get_scheduler_config
 
 IMG_PATTERN = re.compile(r'<img[^>]+src="([^"\s]+)"')
@@ -133,6 +135,30 @@ def _load_media_map(temp_dir: Path) -> Dict[str, str]:
         return {}
 
 
+def _load_deck_paths(connection: sqlite3.Connection) -> Dict[int, list[str]]:
+    try:
+        row = connection.execute('SELECT decks FROM col').fetchone()
+    except sqlite3.Error:
+        return {}
+    if not row or not row[0]:
+        return {}
+    try:
+        data = json.loads(row[0])
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    deck_paths: Dict[int, list[str]] = {}
+    for deck_id, meta in data.items():
+        name = meta.get('name') if isinstance(meta, dict) else None
+        if not name:
+            continue
+        parts = [part.strip() for part in name.split('::') if part.strip()]
+        try:
+            deck_paths[int(deck_id)] = parts
+        except (TypeError, ValueError):
+            continue
+    return deck_paths
+
+
 def _load_notes(connection: sqlite3.Connection) -> Dict[int, dict]:
     notes: Dict[int, dict] = {}
     cursor = connection.execute('SELECT id, guid, flds FROM notes')
@@ -152,7 +178,7 @@ def _map_queue_status(queue: int) -> str:
 
 @transaction.atomic
 def process_apkg_archive(*, user, deck: Deck, uploaded_file) -> Import:
-    summary = {'created': 0, 'updated': 0, 'skipped': 0, 'media_copied': 0}
+    summary = {'created': 0, 'updated': 0, 'skipped': 0, 'media_copied': 0, 'decks_created': 0}
     import_record = Import.objects.create(
         user=user,
         kind='anki',
@@ -177,13 +203,23 @@ def process_apkg_archive(*, user, deck: Deck, uploaded_file) -> Import:
                 raise AnkiImportError('collection.anki2 or collection.anki21 not found in package')
 
             connection = sqlite3.connect(collection_path)
-            try:
-                notes = _load_notes(connection)
+            try:                notes = _load_notes(connection)
                 media_map = _load_media_map(tmpdir)
+                deck_paths = _load_deck_paths(connection)
+                deck_cache: dict[tuple[str, ...], Deck] = {(): deck}
+
+                def resolve_deck(parts: list[str]) -> tuple[Deck, list[Deck]]:
+                    key = tuple(parts)
+                    if key in deck_cache:
+                        return deck_cache[key], []
+                    target, created = ensure_deck_path(user, deck, parts)
+                    deck_cache[key] = target
+                    return target, created
+
                 cursor = connection.execute(
-                    'SELECT id, nid, ord, ivl, reps, lapses, factor, due, queue FROM cards'
+                    'SELECT id, nid, did, ord, ivl, reps, lapses, factor, due, queue FROM cards'
                 )
-                for card_id, note_id, ord_num, ivl, reps, lapses, factor, due, queue in cursor.fetchall():
+                for card_id, note_id, deck_id, ord_num, ivl, reps, lapses, factor, due, queue in cursor.fetchall():
                     note = notes.get(note_id)
                     if not note:
                         summary['skipped'] += 1
@@ -214,16 +250,22 @@ def process_apkg_archive(*, user, deck: Deck, uploaded_file) -> Import:
                         if item not in media:
                             media.append(item)
 
+                    deck_parts = deck_paths.get(deck_id, [])
+                    target_deck, created_decks = resolve_deck(deck_parts)
+                    if created_decks:
+                        summary['decks_created'] += len(created_decks)
+
                     external_key = f"{note['guid']}:{ord_num}"
                     source_anchor = str(card_id)
 
                     try:
                         external = ExternalId.objects.select_related('card').get(system='anki', external_key=external_key)
                     except ExternalId.DoesNotExist:
+                        card_type = infer_card_type(front_md, back_md)
                         card = Card.objects.create(
                             user=user,
-                            deck=deck,
-                            card_type='basic',
+                            deck=target_deck,
+                            card_type=card_type,
                             front_md=front_md,
                             back_md=back_md,
                             tags=[],
@@ -254,8 +296,12 @@ def process_apkg_archive(*, user, deck: Deck, uploaded_file) -> Import:
                     card.front_md = front_md
                     card.back_md = back_md
                     card.media = media
-                    card.deck = deck
-                    card.save(update_fields=['front_md', 'back_md', 'media', 'deck', 'updated_at'])
+                    card.deck = target_deck
+                    basic_types = {'basic', 'basic_image_front', 'basic_image_back'}
+                    if (card.card_type or 'basic') in basic_types:
+                        inferred = infer_card_type(front_md, back_md, default=card.card_type or 'basic')
+                        card.card_type = inferred
+                    card.save(update_fields=['front_md', 'back_md', 'media', 'deck', 'card_type', 'updated_at'])
                     summary['updated'] += 1
             finally:
                 connection.close()

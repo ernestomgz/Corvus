@@ -12,7 +12,7 @@
             <select name="deck_id" id="deck" class="rounded border border-gray-300 px-3 py-2">
                 <option value="">All decks</option>
                 {% for deck in decks %}
-                    <option value="{{ deck.id }}" {% if active_deck and active_deck.id == deck.id %}selected{% endif %}>{{ deck.name }}</option>
+                    <option value="{{ deck.id }}" {% if active_deck and active_deck.id == deck.id %}selected{% endif %}>{{ deck.full_path }}</option>
                 {% endfor %}
             </select>
             <button type="submit" class="rounded bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700">Apply</button>
@@ -39,18 +39,292 @@
             <div class="py-10 text-center text-gray-500">Loading...</div>
         </div>
     </section>
+
+    <section class="rounded border bg-white p-6 shadow space-y-4">
+        <div class="flex items-center justify-between">
+            <h2 class="text-lg font-semibold text-gray-700">Study Heatmap</h2>
+            <div class="text-sm text-gray-500" id="heatmap-streak">Loading streak...</div>
+        </div>
+        <p class="text-sm text-gray-500">Activity from past reviews and upcoming due cards.</p>
+        <div id="study-heatmap" class="heatmap-grid" data-heatmap-summary-url="{% url 'api:analytics-heatmap' %}" data-heatmap-day-url-template="{% url 'api:analytics-heatmap-day' 'DATE_PLACEHOLDER' %}"></div>
+        <div class="heatmap-legend text-xs text-gray-500">
+            <span>Less</span>
+            <div class="heatmap-legend-cell level-0"></div>
+            <div class="heatmap-legend-cell level-1"></div>
+            <div class="heatmap-legend-cell level-2"></div>
+            <div class="heatmap-legend-cell level-3"></div>
+            <div class="heatmap-legend-cell level-4"></div>
+            <span>More</span>
+        </div>
+    </section>
 </div>
 
+<div id="heatmap-modal" class="fixed inset-0 z-40 hidden items-center justify-center bg-gray-900/40 p-4">
+    <div class="max-w-lg w-full rounded bg-white shadow-lg">
+        <div class="flex items-center justify-between border-b px-4 py-2">
+            <h3 class="text-lg font-semibold" id="heatmap-modal-title"></h3>
+            <button type="button" class="text-gray-500 hover:text-gray-700" data-modal-close>&times;</button>
+        </div>
+        <div class="max-h-96 overflow-y-auto p-4 space-y-4" id="heatmap-modal-body"></div>
+    </div>
+</div>
+
+<style>
+    .heatmap-grid { display: flex; gap: 6px; align-items: flex-start; overflow-x: auto; padding-bottom: 4px; }
+    .heatmap-column { display: grid; grid-template-rows: repeat(7, 14px); gap: 4px; }
+    .heatmap-cell { width: 14px; height: 14px; border-radius: 3px; background-color: #e5e7eb; cursor: pointer; transition: transform 0.1s ease-in-out; }
+    .heatmap-cell:hover { transform: scale(1.1); }
+    .heatmap-cell.level-0 { background-color: #e5e7eb; }
+    .heatmap-cell.level-1 { background-color: #c6e48b; }
+    .heatmap-cell.level-2 { background-color: #7bc96f; }
+    .heatmap-cell.level-3 { background-color: #239a3b; }
+    .heatmap-cell.level-4 { background-color: #196127; }
+    .heatmap-cell.has-due { box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.65); }
+    .heatmap-legend { display: flex; align-items: center; gap: 6px; }
+    .heatmap-legend-cell { width: 16px; height: 16px; border-radius: 3px; background-color: #e5e7eb; }
+    .heatmap-legend-cell.level-1 { background-color: #c6e48b; }
+    .heatmap-legend-cell.level-2 { background-color: #7bc96f; }
+    .heatmap-legend-cell.level-3 { background-color: #239a3b; }
+    .heatmap-legend-cell.level-4 { background-color: #196127; }
+    .heatmap-tooltip { position: absolute; z-index: 50; background-color: #ffffff; border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 10px; font-size: 12px; color: #374151; box-shadow: 0 10px 25px rgba(15, 23, 42, 0.15); pointer-events: none; opacity: 0; transition: opacity 0.1s ease-in-out; }
+</style>
 <script>
-    document.addEventListener('keydown', function(event) {
-        const keyMap = { 'a': 0, 'h': 1, 'g': 2, 'e': 3 };
-        const rating = keyMap[event.key.toLowerCase()];
-        if (rating !== undefined) {
-            const button = document.querySelector(`[data-rating="${rating}"]`);
-            if (button) {
-                button.click();
+    (function() {
+        const isEditable = (element) => {
+            if (!element) {
+                return false;
             }
+            const tag = element.tagName;
+            return tag === 'INPUT' || tag === 'TEXTAREA' || element.isContentEditable;
+        };
+
+        document.addEventListener('keydown', function(event) {
+            if (isEditable(event.target)) {
+                return;
+            }
+            const key = event.key.toLowerCase();
+            if (key === ' ' || key === 'enter') {
+                const revealButton = document.querySelector('[data-action="reveal"]');
+                if (revealButton) {
+                    event.preventDefault();
+                    revealButton.click();
+                    return;
+                }
+                const goodButton = document.querySelector('[data-rating="2"]');
+                if (goodButton) {
+                    event.preventDefault();
+                    goodButton.click();
+                }
+                return;
+            }
+            if (['1', '2', '3', '4'].includes(key)) {
+                const ratingValue = (parseInt(key, 10) - 1).toString();
+                const ratingButton = document.querySelector(`[data-rating="${ratingValue}"]`);
+                if (ratingButton) {
+                    event.preventDefault();
+                    ratingButton.click();
+                }
+                return;
+            }
+            const mnemonic = { 'a': '0', 'h': '1', 'g': '2', 'e': '3' };
+            const mapped = mnemonic[key];
+            if (mapped !== undefined) {
+                const button = document.querySelector(`[data-rating="${mapped}"]`);
+                if (button) {
+                    event.preventDefault();
+                    button.click();
+                }
+            }
+        });
+    })();
+
+    (function() {
+        const grid = document.getElementById('study-heatmap');
+        if (!grid) {
+            return;
         }
-    });
+        const summaryUrl = grid.dataset.heatmapSummaryUrl;
+        const dayTemplate = grid.dataset.heatmapDayUrlTemplate;
+        const streakEl = document.getElementById('heatmap-streak');
+
+        const tooltip = document.createElement('div');
+        tooltip.className = 'heatmap-tooltip hidden';
+        document.body.appendChild(tooltip);
+
+        const modal = document.getElementById('heatmap-modal');
+        const modalTitle = document.getElementById('heatmap-modal-title');
+        const modalBody = document.getElementById('heatmap-modal-body');
+        const closeButtons = modal.querySelectorAll('[data-modal-close]');
+        const closeModal = () => {
+            modal.classList.add('hidden');
+            modalBody.innerHTML = '';
+        };
+        closeButtons.forEach((btn) => btn.addEventListener('click', closeModal));
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                closeModal();
+            }
+        });
+
+        const levelForCount = (count) => {
+            if (!count) {
+                return 0;
+            }
+            if (count < 3) {
+                return 1;
+            }
+            if (count < 6) {
+                return 2;
+            }
+            if (count < 10) {
+                return 3;
+            }
+            return 4;
+        };
+
+        const hideTooltip = () => {
+            tooltip.classList.add('hidden');
+            tooltip.style.opacity = '0';
+        };
+
+        const showTooltip = (event, day) => {
+            const cellRect = event.target.getBoundingClientRect();
+            const dateObj = new Date(day.date + 'T00:00:00');
+            tooltip.innerHTML = `
+                <div class="font-semibold">${dateObj.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</div>
+                <div>${day.reviewed} review${day.reviewed === 1 ? '' : 's'}</div>
+                <div>${day.due} due</div>
+            `;
+            tooltip.style.left = `${window.scrollX + cellRect.left + cellRect.width + 8}px`;
+            tooltip.style.top = `${window.scrollY + cellRect.top - cellRect.height}px`;
+            tooltip.classList.remove('hidden');
+            tooltip.style.opacity = '1';
+        };
+
+        const openDay = (day) => {
+            const url = dayTemplate.replace('DATE_PLACEHOLDER', day.date);
+            modal.classList.remove('hidden');
+            const dateObj = new Date(day.date + 'T00:00:00');
+            modalTitle.textContent = dateObj.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+            modalBody.innerHTML = '<p class="text-sm text-gray-500">Loading…</p>';
+            fetch(url)
+                .then((response) => {
+                    if (!response.ok) {
+                        throw new Error('Failed');
+                    }
+                    return response.json();
+                })
+                .then((payload) => {
+                    const fragments = [];
+                    if (payload.reviews && payload.reviews.length) {
+                        const listItems = payload.reviews.map((item) => {
+                            const row = document.createElement('div');
+                            row.className = 'rounded border border-gray-200 bg-gray-50 px-3 py-2';
+                            const front = item.front_md || '';
+                            const excerpt = front.length > 120 ? `${front.slice(0, 117)}…` : front;
+                            row.innerHTML = `
+                                <div class="text-xs uppercase tracking-wide text-gray-500">Review · ${item.deck}</div>
+                                <div class="text-sm text-gray-800">${excerpt.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+                                <div class="text-xs text-gray-500">Rating: ${item.rating} · ${new Date(item.reviewed_at).toLocaleTimeString()}</div>
+                            `;
+                            return row;
+                        });
+                        const container = document.createElement('div');
+                        container.innerHTML = '<h4 class="text-sm font-semibold text-gray-700 mb-2">Reviews</h4>';
+                        listItems.forEach((el) => container.appendChild(el));
+                        fragments.push(container);
+                    }
+                    if (payload.due && payload.due.length) {
+                        const listItems = payload.due.map((item) => {
+                            const row = document.createElement('div');
+                            row.className = 'rounded border border-indigo-100 bg-indigo-50 px-3 py-2';
+                            row.innerHTML = `
+                                <div class="text-xs uppercase tracking-wide text-indigo-500">Due · ${item.deck}</div>
+                                <div class="text-xs text-indigo-600">Queue: ${item.queue_status}</div>
+                                ${item.due_at ? `<div class=\"text-xs text-indigo-500\">Due at ${new Date(item.due_at).toLocaleTimeString()}</div>` : ''}
+                            `;
+                            return row;
+                        });
+                        const container = document.createElement('div');
+                        container.innerHTML = '<h4 class="text-sm font-semibold text-gray-700 mb-2">Due</h4>';
+                        listItems.forEach((el) => container.appendChild(el));
+                        fragments.push(container);
+                    }
+                    if (!fragments.length) {
+                        modalBody.innerHTML = '<p class="text-sm text-gray-500">No cards reviewed or due on this day.</p>';
+                    } else {
+                        modalBody.innerHTML = '';
+                        fragments.forEach((fragment) => modalBody.appendChild(fragment));
+                    }
+                })
+                .catch(() => {
+                    modalBody.innerHTML = '<p class="text-sm text-red-600">Unable to load day details.</p>';
+                });
+        };
+
+        const renderHeatmap = (data) => {
+            grid.innerHTML = '';
+            const days = Array.isArray(data.days) ? data.days : [];
+            const startDate = new Date(data.start + 'T00:00:00');
+            const startOffset = startDate.getDay();
+            const totalCells = startOffset + days.length;
+            const weekCount = Math.ceil(totalCells / 7);
+            const columns = [];
+            for (let week = 0; week < weekCount; week += 1) {
+                const column = document.createElement('div');
+                column.className = 'heatmap-column';
+                columns.push(column);
+                grid.appendChild(column);
+            }
+            for (let i = 0; i < startOffset && columns[0]; i += 1) {
+                const filler = document.createElement('div');
+                filler.className = 'heatmap-cell level-0 heatmap-cell-empty';
+                columns[0].appendChild(filler);
+            }
+            days.forEach((day, index) => {
+                const position = startOffset + index;
+                const weekIndex = Math.floor(position / 7);
+                const column = columns[weekIndex];
+                if (!column) {
+                    return;
+                }
+                const cell = document.createElement('div');
+                const level = levelForCount(day.reviewed || 0);
+                cell.className = `heatmap-cell level-${level}${day.due ? ' has-due' : ''}`;
+                column.appendChild(cell);
+                cell.addEventListener('mouseenter', (event) => showTooltip(event, day));
+                cell.addEventListener('mouseleave', hideTooltip);
+                cell.addEventListener('click', () => openDay(day));
+            });
+            columns.forEach((column) => {
+                while (column.children.length < 7) {
+                    const filler = document.createElement('div');
+                    filler.className = 'heatmap-cell level-0 heatmap-cell-empty';
+                    column.appendChild(filler);
+                }
+            });
+            document.addEventListener('scroll', hideTooltip, true);
+            grid.addEventListener('mouseleave', hideTooltip);
+        };
+
+        fetch(summaryUrl)
+            .then((response) => {
+                if (!response.ok) {
+                    throw new Error('Request failed');
+                }
+                return response.json();
+            })
+            .then((data) => {
+                renderHeatmap(data);
+                if (streakEl) {
+                    streakEl.textContent = `Current streak: ${data.current_streak} day${data.current_streak === 1 ? '' : 's'} • Longest: ${data.longest_streak}`;
+                }
+            })
+            .catch(() => {
+                if (streakEl) {
+                    streakEl.textContent = 'Unable to load heatmap data.';
+                }
+            });
+    })();
 </script>
 {% endblock %}

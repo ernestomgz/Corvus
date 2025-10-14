@@ -2,8 +2,10 @@ from django.contrib import admin
 from django.urls import include, path
 from django.conf import settings
 from django.conf.urls.static import static
+from core.views import home
 
 urlpatterns = [
+    path('', home.landing, name='landing'),
     path('admin/', admin.site.urls),
     path('accounts/', include(('accounts.urls', 'accounts'), namespace='accounts')),
     path('decks/', include(('core.urls.decks', 'decks'), namespace='decks')),

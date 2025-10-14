@@ -12,7 +12,7 @@
     <tbody class="divide-y divide-gray-100 text-sm">
         {% for card in cards %}
             <tr>
-                <td class="px-4 py-3 font-medium text-gray-800">{{ card.deck.name }}</td>
+                <td class="px-4 py-3 font-medium text-gray-800">{{ card.deck.full_path }}</td>
                 <td class="px-4 py-3 text-gray-700">{{ card.front_md|truncatechars:80 }}</td>
                 <td class="px-4 py-3 text-gray-500">
                     {% for tag in card.tags %}

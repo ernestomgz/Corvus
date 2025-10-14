@@ -19,15 +19,39 @@ def _normalise_tags(raw: Iterable[str]) -> list[str]:
 class DeckForm(forms.ModelForm):
     class Meta:
         model = Deck
-        fields = ['name', 'description']
+        fields = ['name', 'parent', 'description']
         widgets = {
             'name': forms.TextInput(attrs={'class': 'w-full border rounded p-2'}),
+            'parent': forms.Select(attrs={'class': 'w-full border rounded p-2'}),
             'description': forms.Textarea(attrs={'class': 'w-full border rounded p-2', 'rows': 3}),
         }
 
     def __init__(self, *args, user=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.user = user
+        parent_field = self.fields['parent']
+        if user is not None:
+            queryset = Deck.objects.for_user(user).order_by('name')
+            if self.instance.pk:
+                queryset = queryset.exclude(pk=self.instance.pk)
+            parent_field.queryset = queryset
+        else:
+            parent_field.queryset = Deck.objects.none()
+        parent_field.empty_label = 'No parent (top level)'
+
+    def clean_parent(self):
+        parent = self.cleaned_data.get('parent')
+        if parent is None:
+            return None
+        if self.user is not None and parent.user != self.user:
+            raise forms.ValidationError('Select a parent deck that belongs to you.')
+        if self.instance.pk:
+            current = parent
+            while current is not None:
+                if current.pk == self.instance.pk:
+                    raise forms.ValidationError('A deck cannot be nested within itself.')
+                current = current.parent
+        return parent
 
     def save(self, commit: bool = True):
         deck = super().save(commit=False)
@@ -58,6 +82,15 @@ class CardForm(forms.ModelForm):
     def __init__(self, *args, user=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.user = user
+        parent_field = self.fields['parent']
+        if user is not None:
+            queryset = Deck.objects.for_user(user).order_by('name')
+            if self.instance.pk:
+                queryset = queryset.exclude(pk=self.instance.pk)
+            parent_field.queryset = queryset
+        else:
+            parent_field.queryset = Deck.objects.none()
+        parent_field.empty_label = 'No parent (top level)'
         if user is not None:
             self.fields['deck'].queryset = Deck.objects.filter(user=user).order_by('name')
         if self.instance.pk:
@@ -69,6 +102,20 @@ class CardForm(forms.ModelForm):
             return _normalise_tags(raw)
         parts = raw.split(',') if raw else []
         return _normalise_tags(parts)
+
+    def clean_parent(self):
+        parent = self.cleaned_data.get('parent')
+        if parent is None:
+            return None
+        if self.user is not None and parent.user != self.user:
+            raise forms.ValidationError('Select a parent deck that belongs to you.')
+        if self.instance.pk:
+            current = parent
+            while current is not None:
+                if current.pk == self.instance.pk:
+                    raise forms.ValidationError('A deck cannot be nested within itself.')
+                current = current.parent
+        return parent
 
     def save(self, commit: bool = True):
         card = super().save(commit=False)

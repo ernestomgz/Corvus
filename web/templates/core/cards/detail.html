@@ -1,11 +1,12 @@
 {% extends 'base.html' %}
 {% block title %}Card Detail | Corvus{% endblock %}
 {% block content %}
+{% load card_rendering %}
 <div class="mx-auto max-w-3xl space-y-6">
     <div class="flex items-center justify-between">
         <div>
             <h1 class="text-2xl font-semibold">Card Detail</h1>
-            <p class="text-sm text-gray-500">Deck: {{ card.deck.name }}</p>
+            <p class="text-sm text-gray-500">Deck: {{ card.deck.full_path }}</p>
         </div>
         <div class="flex gap-2">
             <a href="{% url 'cards:edit' card.id %}" class="rounded border border-slate-200 px-4 py-2 text-slate-600 hover:bg-slate-50">Edit</a>
@@ -15,11 +16,11 @@
     <div class="grid gap-6 rounded border bg-white p-6 shadow">
         <div>
             <h2 class="text-lg font-semibold text-gray-700">Front</h2>
-            <pre class="mt-2 whitespace-pre-wrap rounded border bg-gray-50 p-4 text-sm">{{ card.front_md }}</pre>
+            <div class="mt-2 rounded border bg-gray-50 p-4 text-sm space-y-2 rendered-card">{{ card.front_md|render_card }}</div>
         </div>
         <div>
             <h2 class="text-lg font-semibold text-gray-700">Back</h2>
-            <pre class="mt-2 whitespace-pre-wrap rounded border bg-gray-50 p-4 text-sm">{{ card.back_md }}</pre>
+            <div class="mt-2 rounded border bg-gray-50 p-4 text-sm space-y-2 rendered-card">{{ card.back_md|render_card }}</div>
         </div>
         <div>
             <h2 class="text-lg font-semibold text-gray-700">Metadata</h2>

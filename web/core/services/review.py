@@ -21,7 +21,7 @@ class TodaySummary:
 def _scoped_states(user, deck: Optional[Deck] = None):
     qs = SchedulingState.objects.select_related('card', 'card__deck').filter(card__user=user)
     if deck is not None:
-        qs = qs.filter(card__deck=deck)
+        qs = qs.filter(card__deck_id__in=deck.descendant_ids())
     return qs
 
 
