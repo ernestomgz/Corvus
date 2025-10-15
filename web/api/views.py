@@ -383,15 +383,23 @@ def analytics_heatmap_summary(request: HttpRequest) -> JsonResponse:
     except PermissionError as exc:
         return _json_error(str(exc), status=401)
 
-    try:
-        past_days = int(request.GET.get('past_days', 365))
-        future_days = int(request.GET.get('future_days', 90))
-    except ValueError:
-        return _json_error('past_days and future_days must be integers', status=400)
-
     today = timezone.localdate()
-    start_date = today - timedelta(days=max(past_days, 0))
-    end_date = today + timedelta(days=max(future_days, 0))
+    year_param = request.GET.get('year')
+    if year_param:
+        try:
+            selected_year = int(year_param)
+        except ValueError:
+            return _json_error('year must be an integer', status=400)
+        start_date = datetime(selected_year, 1, 1).date()
+        end_date = datetime(selected_year, 12, 31).date()
+    else:
+        try:
+            past_days = int(request.GET.get('past_days', 365))
+            future_days = int(request.GET.get('future_days', 90))
+        except ValueError:
+            return _json_error('past_days and future_days must be integers', status=400)
+        start_date = today - timedelta(days=max(past_days, 0))
+        end_date = today + timedelta(days=max(future_days, 0))
 
     start_dt = timezone.make_aware(datetime.combine(start_date, time.min))
     end_dt = timezone.make_aware(datetime.combine(end_date, time.max))
@@ -403,15 +411,15 @@ def analytics_heatmap_summary(request: HttpRequest) -> JsonResponse:
         .annotate(count=Count('id'))
     )
     due_rows = (
-        SchedulingState.objects.filter(
-            card__user=user,
-            due_at__isnull=False,
-            due_at__gte=start_dt,
-            due_at__lte=end_dt,
-        )
-        .annotate(day=TruncDate('due_at'))
-        .values('day')
-        .annotate(count=Count('card_id'))
+          SchedulingState.objects.filter(
+              card__user=user,
+              due_at__isnull=False,
+              due_at__gte=start_dt,
+              due_at__lte=end_dt,
+          )
+          .annotate(day=TruncDate('due_at'))
+          .values('day')
+          .annotate(count=Count('card_id'))
     )
 
     day_lookup: dict[str, dict[str, int]] = {}

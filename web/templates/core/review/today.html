@@ -15,6 +15,7 @@
                     <option value="{{ deck.id }}" {% if active_deck and active_deck.id == deck.id %}selected{% endif %}>{{ deck.full_path }}</option>
                 {% endfor %}
             </select>
+            <input type="hidden" name="year" value="{{ selected_year }}">
             <button type="submit" class="rounded bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700">Apply</button>
         </form>
     </header>
@@ -41,8 +42,16 @@
     </section>
 
     <section class="rounded border bg-white p-6 shadow space-y-4">
-        <div class="flex items-center justify-between">
-            <h2 class="text-lg font-semibold text-gray-700">Study Heatmap</h2>
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center gap-3">
+                <h2 class="text-lg font-semibold text-gray-700">Study Heatmap</h2>
+                <label for="heatmap-year" class="text-xs uppercase tracking-wide text-gray-500">Year</label>
+                <select id="heatmap-year" data-user-selected="{{ user_selected_year|yesno:'true,false' }}" class="rounded border border-gray-300 px-2 py-1 text-sm text-gray-700">
+                    {% for year in heatmap_years %}
+                        <option value="{{ year }}" {% if year == selected_year %}selected{% endif %}>{{ year }}</option>
+                    {% endfor %}
+                </select>
+            </div>
             <div class="text-sm text-gray-500" id="heatmap-streak">Loading streak...</div>
         </div>
         <p class="text-sm text-gray-500">Activity from past reviews and upcoming due cards.</p>
@@ -70,8 +79,8 @@
 </div>
 
 <style>
-    .heatmap-grid { display: flex; gap: 6px; align-items: flex-start; overflow-x: auto; padding-bottom: 4px; }
-    .heatmap-column { display: grid; grid-template-rows: repeat(7, 14px); gap: 4px; }
+    .heatmap-grid { display: flex; gap: 6px; align-items: stretch; overflow-x: auto; padding-bottom: 4px; flex-wrap: nowrap; max-width: 100%; }
+    .heatmap-column { display: grid; grid-template-rows: repeat(7, 14px); gap: 4px; min-width: 16px; }
     .heatmap-cell { width: 14px; height: 14px; border-radius: 3px; background-color: #e5e7eb; cursor: pointer; transition: transform 0.1s ease-in-out; }
     .heatmap-cell:hover { transform: scale(1.1); }
     .heatmap-cell.level-0 { background-color: #e5e7eb; }
@@ -87,6 +96,12 @@
     .heatmap-legend-cell.level-3 { background-color: #239a3b; }
     .heatmap-legend-cell.level-4 { background-color: #196127; }
     .heatmap-tooltip { position: absolute; z-index: 50; background-color: #ffffff; border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 10px; font-size: 12px; color: #374151; box-shadow: 0 10px 25px rgba(15, 23, 42, 0.15); pointer-events: none; opacity: 0; transition: opacity 0.1s ease-in-out; }
+    @media (max-width: 640px) {
+        .heatmap-grid { gap: 4px; padding-bottom: 6px; }
+        .heatmap-column { grid-template-rows: repeat(7, 12px); gap: 3px; min-width: 12px; }
+        .heatmap-cell { width: 12px; height: 12px; border-radius: 2px; }
+        .heatmap-legend-cell { width: 12px; height: 12px; }
+    }
 </style>
 <script>
     (function() {
@@ -146,6 +161,26 @@
         const summaryUrl = grid.dataset.heatmapSummaryUrl;
         const dayTemplate = grid.dataset.heatmapDayUrlTemplate;
         const streakEl = document.getElementById('heatmap-streak');
+        const yearSelect = document.getElementById('heatmap-year');
+        const yearField = document.querySelector('form [name="year"]');
+        const userSelectedYear = yearSelect ? yearSelect.dataset.userSelected === 'true' : false;
+        const currentYearValue = new Date().getFullYear().toString();
+
+        if (yearSelect) {
+            const hasCurrentYear = Array.from(yearSelect.options || []).some((option) => option.value === currentYearValue);
+            if (!hasCurrentYear) {
+                const option = document.createElement('option');
+                option.value = currentYearValue;
+                option.textContent = currentYearValue;
+                yearSelect.insertBefore(option, yearSelect.firstChild);
+            }
+            if (!userSelectedYear) {
+                yearSelect.value = currentYearValue;
+                if (yearField) {
+                    yearField.value = currentYearValue;
+                }
+            }
+        }
 
         const tooltip = document.createElement('div');
         tooltip.className = 'heatmap-tooltip hidden';
@@ -265,10 +300,7 @@
         const renderHeatmap = (data) => {
             grid.innerHTML = '';
             const days = Array.isArray(data.days) ? data.days : [];
-            const startDate = new Date(data.start + 'T00:00:00');
-            const startOffset = startDate.getDay();
-            const totalCells = startOffset + days.length;
-            const weekCount = Math.ceil(totalCells / 7);
+            const weekCount = Math.max(1, Math.ceil(days.length / 7));
             const columns = [];
             for (let week = 0; week < weekCount; week += 1) {
                 const column = document.createElement('div');
@@ -276,15 +308,9 @@
                 columns.push(column);
                 grid.appendChild(column);
             }
-            for (let i = 0; i < startOffset && columns[0]; i += 1) {
-                const filler = document.createElement('div');
-                filler.className = 'heatmap-cell level-0 heatmap-cell-empty';
-                columns[0].appendChild(filler);
-            }
             days.forEach((day, index) => {
-                const position = startOffset + index;
-                const weekIndex = Math.floor(position / 7);
-                const column = columns[weekIndex];
+                const weekIndex = Math.floor(index / 7);
+                const column = columns[weekIndex] || columns[columns.length - 1];
                 if (!column) {
                     return;
                 }
@@ -307,24 +333,53 @@
             grid.addEventListener('mouseleave', hideTooltip);
         };
 
-        fetch(summaryUrl)
-            .then((response) => {
-                if (!response.ok) {
-                    throw new Error('Request failed');
+        const buildSummaryUrl = () => {
+            if (!summaryUrl) {
+                return summaryUrl;
+            }
+            const url = new URL(summaryUrl, window.location.origin);
+            if (yearSelect) {
+                url.searchParams.set('year', yearSelect.value);
+            }
+            return url.toString();
+        };
+
+        const fetchSummary = () => {
+            const url = buildSummaryUrl();
+            if (!url) {
+                return;
+            }
+            fetch(url)
+                .then((response) => {
+                    if (!response.ok) {
+                        throw new Error('Request failed');
+                    }
+                    return response.json();
+                })
+                .then((data) => {
+                    renderHeatmap(data);
+                    if (streakEl) {
+                        streakEl.textContent = `Current streak: ${data.current_streak} day${data.current_streak === 1 ? '' : 's'} - Longest: ${data.longest_streak}`;
+                    }
+                })
+                .catch(() => {
+                    if (streakEl) {
+                        streakEl.textContent = 'Unable to load heatmap data.';
+                    }
+                });
+        };
+
+        if (yearSelect) {
+            yearSelect.addEventListener('change', () => {
+                yearSelect.dataset.userSelected = 'true';
+                if (yearField) {
+                    yearField.value = yearSelect.value;
                 }
-                return response.json();
-            })
-            .then((data) => {
-                renderHeatmap(data);
-                if (streakEl) {
-                    streakEl.textContent = `Current streak: ${data.current_streak} day${data.current_streak === 1 ? '' : 's'} * Longest: ${data.longest_streak}`;
-                }
-            })
-            .catch(() => {
-                if (streakEl) {
-                    streakEl.textContent = 'Unable to load heatmap data.';
-                }
+                fetchSummary();
             });
+        }
+
+        fetchSummary();
     })();
 </script>
 {% endblock %}
