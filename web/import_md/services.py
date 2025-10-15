@@ -46,10 +46,31 @@ def _normalise_deck_path(parts: list[str]) -> list[str]:
         if not part:
             continue
         normalised = part.strip()
-        if not normalised or normalised.lower() == 'default':
+        lower = normalised.lower()
+        if not normalised or lower == 'default':
+            continue
+        if not cleaned and lower in {'notes'}:
             continue
         cleaned.append(normalised)
     return cleaned
+
+
+def _strip_root_deck(parts: list[str], root: Deck) -> list[str]:
+    if not parts:
+        return []
+    root_parts = [segment.strip() for segment in root.full_path().split('/') if segment.strip()]
+    lower_parts = [segment.lower() for segment in root_parts]
+    index = 0
+    for expected in lower_parts:
+        if index < len(parts) and parts[index].strip().lower() == expected:
+            index += 1
+        else:
+            break
+    if index == 0 and lower_parts:
+        root_name = lower_parts[-1]
+        if parts and parts[0].strip().lower() == root_name:
+            index = 1
+    return [part for part in parts[index:]]
 
 
 def _normalise_tags(raw: str | None) -> list[str]:
@@ -286,7 +307,7 @@ def prepare_markdown_session(*, user, deck: Deck, uploaded_file) -> ImportSessio
     diff_count = 0
 
     for index, parsed in enumerate(parsed_cards):
-        parsed.deck_path = _normalise_deck_path(parsed.deck_path)
+        parsed.deck_path = _strip_root_deck(_normalise_deck_path(parsed.deck_path), deck)
         external = existing_map.get(parsed.external_key)
         existing_payload = None
         has_changes = False
@@ -295,7 +316,7 @@ def prepare_markdown_session(*, user, deck: Deck, uploaded_file) -> ImportSessio
             existing_payload = {
                 'card_id': str(existing_card.id),
                 'deck_id': existing_card.deck_id,
-                'deck_path': existing_card.deck.full_path().split('/'),
+                'deck_path': _strip_root_deck(existing_card.deck.full_path().split('/'), deck),
                 'front_md': existing_card.front_md,
                 'back_md': existing_card.back_md,
                 'tags': existing_card.tags,
@@ -390,7 +411,7 @@ def apply_markdown_session(session: ImportSession, *, decisions: Dict[int, str] 
         for card_data in cards_payload:
             index = card_data.get('index')
             decision = decisions.get(index, 'imported')
-            deck_parts = _normalise_deck_path(card_data.get('deck_path', []))
+            deck_parts = _strip_root_deck(_normalise_deck_path(card_data.get('deck_path', [])), root_deck)
             if not deck_parts:
                 target_deck, created_decks = root_deck, []
             else:

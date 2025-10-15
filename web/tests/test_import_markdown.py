@@ -81,6 +81,17 @@ def test_md_media_copy_and_rewrite(user_factory, deck_factory, settings):
     assert '![' in card.back_md and settings.MEDIA_URL in card.back_md
 
 
+def test_md_import_skips_root_folder(user_factory, deck_factory):
+    user = user_factory()
+    deck = deck_factory(user=user, name='Biology')
+    archive = _build_zip({'Biology/note.md': '#card Question\n\nAnswer'})
+    record = process_markdown_archive(user=user, deck=deck, uploaded_file=archive)
+    assert record.summary['created'] == 1
+    card = Card.objects.get(user=user)
+    assert card.deck == deck
+    assert Deck.objects.filter(user=user, parent=deck, name='Biology').count() == 0
+
+
 def test_prepare_markdown_session_creates_payload(user_factory, deck_factory):
     user = user_factory()
     deck = deck_factory(user=user)
