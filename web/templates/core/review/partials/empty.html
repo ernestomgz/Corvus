@@ -3,6 +3,15 @@
         <p class="text-lg font-semibold">All caught up!</p>
         <p class="mt-2 text-sm">No cards due right now. Check back later or add new cards.</p>
     </div>
+    {% if can_undo %}
+        <form method="post" action="{% url 'review:undo' %}" hx-post="{% url 'review:undo' %}" hx-target="#review-panel" hx-swap="innerHTML" class="mx-auto flex max-w-xs">
+            {% csrf_token %}
+            {% if deck %}
+                <input type="hidden" name="deck_id" value="{{ deck.id }}">
+            {% endif %}
+            <button type="submit" class="w-full rounded border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">Undo Last Review</button>
+        </form>
+    {% endif %}
     <div class="rounded border bg-gray-100 px-4 py-2 text-sm text-gray-600">
         New {{ summary.new_count }} | Review {{ summary.review_count }} | Due {{ summary.due_count }}
     </div>
