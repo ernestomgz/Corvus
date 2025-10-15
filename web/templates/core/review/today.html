@@ -206,7 +206,7 @@
             modal.classList.remove('hidden');
             const dateObj = new Date(day.date + 'T00:00:00');
             modalTitle.textContent = dateObj.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
-            modalBody.innerHTML = '<p class="text-sm text-gray-500">Loading…</p>';
+            modalBody.innerHTML = '<p class="text-sm text-gray-500">Loading...</p>';
             fetch(url)
                 .then((response) => {
                     if (!response.ok) {
@@ -221,11 +221,11 @@
                             const row = document.createElement('div');
                             row.className = 'rounded border border-gray-200 bg-gray-50 px-3 py-2';
                             const front = item.front_md || '';
-                            const excerpt = front.length > 120 ? `${front.slice(0, 117)}…` : front;
+                            const excerpt = front.length > 120 ? `${front.slice(0, 117)}...` : front;
                             row.innerHTML = `
-                                <div class="text-xs uppercase tracking-wide text-gray-500">Review · ${item.deck}</div>
+                                <div class="text-xs uppercase tracking-wide text-gray-500">Review - ${item.deck}</div>
                                 <div class="text-sm text-gray-800">${excerpt.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
-                                <div class="text-xs text-gray-500">Rating: ${item.rating} · ${new Date(item.reviewed_at).toLocaleTimeString()}</div>
+                                <div class="text-xs text-gray-500">Rating: ${item.rating} - ${new Date(item.reviewed_at).toLocaleTimeString()}</div>
                             `;
                             return row;
                         });
@@ -239,7 +239,7 @@
                             const row = document.createElement('div');
                             row.className = 'rounded border border-indigo-100 bg-indigo-50 px-3 py-2';
                             row.innerHTML = `
-                                <div class="text-xs uppercase tracking-wide text-indigo-500">Due · ${item.deck}</div>
+                                <div class="text-xs uppercase tracking-wide text-indigo-500">Due - ${item.deck}</div>
                                 <div class="text-xs text-indigo-600">Queue: ${item.queue_status}</div>
                                 ${item.due_at ? `<div class=\"text-xs text-indigo-500\">Due at ${new Date(item.due_at).toLocaleTimeString()}</div>` : ''}
                             `;
@@ -317,7 +317,7 @@
             .then((data) => {
                 renderHeatmap(data);
                 if (streakEl) {
-                    streakEl.textContent = `Current streak: ${data.current_streak} day${data.current_streak === 1 ? '' : 's'} • Longest: ${data.longest_streak}`;
+                    streakEl.textContent = `Current streak: ${data.current_streak} day${data.current_streak === 1 ? '' : 's'} * Longest: ${data.longest_streak}`;
                 }
             })
             .catch(() => {

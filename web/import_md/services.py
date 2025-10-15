@@ -21,6 +21,7 @@ OBSIDIAN_LINK_PATTERN = re.compile(r'!\[\[(?P<path>[^\]]+)\]\]')
 ID_PATTERN = re.compile(r'^\s*id::\s*(?P<id>[\w:-]+)', re.IGNORECASE)
 TAGS_PATTERN = re.compile(r'^\s*tags::\s*(?P<tags>.+)$', re.IGNORECASE)
 MEDIA_PATTERN = re.compile(r'!\[[^\]]*\]\(([^)]+)\)')
+HEADING_PATTERN = re.compile(r'^\s*#+\s*')
 
 
 @dataclass
@@ -37,6 +38,18 @@ class ParsedCard:
 
 class MarkdownImportError(Exception):
     """Raised when the markdown importer encounters an unrecoverable problem."""
+
+
+def _normalise_deck_path(parts: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    for part in parts:
+        if not part:
+            continue
+        normalised = part.strip()
+        if not normalised or normalised.lower() == 'default':
+            continue
+        cleaned.append(normalised)
+    return cleaned
 
 
 def _normalise_tags(raw: str | None) -> list[str]:
@@ -115,6 +128,12 @@ def _rewrite_media_links(text: str, *, user_id: int, zip_file: zipfile.ZipFile, 
     return rewritten, media_items
 
 
+def _clean_front_text(value: str) -> str:
+    value = value.strip()
+    value = HEADING_PATTERN.sub('', value)
+    return value.strip()
+
+
 def _parse_markdown_cards(
     content: str,
     source_path: str,
@@ -126,7 +145,7 @@ def _parse_markdown_cards(
 ) -> List[ParsedCard]:
     lines = content.splitlines()
     parsed_cards: list[ParsedCard] = []
-    deck_parts = list(deck_path or [])
+    deck_parts = _normalise_deck_path(list(deck_path or []))
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -140,6 +159,8 @@ def _parse_markdown_cards(
         front_before = line[:marker_index].strip()
         front_after = line[marker_index + len('#card'):].strip()
         front_content = front_before or front_after
+        if front_content:
+            front_content = _clean_front_text(front_content)
 
         if not front_content:
             j = i - 1
@@ -148,6 +169,7 @@ def _parse_markdown_cards(
                 collected.insert(0, lines[j].strip())
                 j -= 1
             front_content = '\n'.join(collected).strip()
+            front_content = _clean_front_text(front_content)
 
         i += 1
         anchor = None
@@ -175,7 +197,9 @@ def _parse_markdown_cards(
 
         back_md_raw = '\n'.join(back_lines).strip()
         if not front_content:
-            front_content = back_md_raw[:120]
+            front_content = _clean_front_text(back_md_raw[:120])
+        else:
+            front_content = _clean_front_text(front_content)
 
         front_md, media_front = _rewrite_media_links(front_content, user_id=user_id, zip_file=zip_file, summary=summary)
         back_md, media_back = _rewrite_media_links(back_md_raw, user_id=user_id, zip_file=zip_file, summary=summary)
@@ -229,7 +253,8 @@ def _collect_markdown_cards(*, user_id: int, uploaded_file) -> Tuple[List[Parsed
                 markdown_text = raw_bytes.decode('utf-8')
             except UnicodeDecodeError:
                 markdown_text = raw_bytes.decode('utf-8', 'ignore')
-            deck_parts = [part for part in Path(info.filename).parts[:-1] if part]
+            raw_parts = [part for part in Path(info.filename).parts[:-1] if part]
+            deck_parts = _normalise_deck_path(raw_parts)
             parsed_cards.extend(
                 _parse_markdown_cards(
                     markdown_text,
@@ -247,9 +272,6 @@ def _collect_markdown_cards(*, user_id: int, uploaded_file) -> Tuple[List[Parsed
 
 def prepare_markdown_session(*, user, deck: Deck, uploaded_file) -> ImportSession:
     parsed_cards, parse_summary = _collect_markdown_cards(user_id=user.id, uploaded_file=uploaded_file)
-    if not parsed_cards:
-        raise MarkdownImportError('No cards detected in the provided file.')
-
     external_keys = [card.external_key for card in parsed_cards]
     existing_map = {
         external.external_key: external
@@ -264,6 +286,7 @@ def prepare_markdown_session(*, user, deck: Deck, uploaded_file) -> ImportSessio
     diff_count = 0
 
     for index, parsed in enumerate(parsed_cards):
+        parsed.deck_path = _normalise_deck_path(parsed.deck_path)
         external = existing_map.get(parsed.external_key)
         existing_payload = None
         has_changes = False
@@ -367,8 +390,11 @@ def apply_markdown_session(session: ImportSession, *, decisions: Dict[int, str] 
         for card_data in cards_payload:
             index = card_data.get('index')
             decision = decisions.get(index, 'imported')
-            deck_parts = card_data.get('deck_path', [])
-            target_deck, created_decks = resolve_deck(deck_parts)
+            deck_parts = _normalise_deck_path(card_data.get('deck_path', []))
+            if not deck_parts:
+                target_deck, created_decks = root_deck, []
+            else:
+                target_deck, created_decks = resolve_deck(deck_parts)
             if created_decks:
                 summary['decks_created'] += len(created_decks)
 

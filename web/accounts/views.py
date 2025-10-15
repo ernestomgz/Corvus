@@ -13,7 +13,7 @@ def register(request):
             return redirect('accounts:register')
         user = User.objects.create_user(email=email, password=password)
         login(request, user)
-        return redirect('landing')
+        return redirect('decks:list')
     return render(request, 'accounts/register.html')
 
 def login_view(request):
@@ -23,7 +23,7 @@ def login_view(request):
         user = authenticate(request, email=email, password=password)
         if user is not None:
             login(request, user)
-            return redirect('landing')
+            return redirect('decks:list')
         else:
             messages.error(request, 'Invalid credentials.')
     return render(request, 'accounts/login.html')

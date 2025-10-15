@@ -50,6 +50,16 @@ def upload_markdown(request: HttpRequest) -> HttpResponse:
         except MarkdownImportError as exc:
             messages.error(request, f"Import failed: {exc}")
             return redirect('imports:dashboard')
+        payload = session.payload or {}
+        summary = payload.get('summary', {})
+        if summary.get('updates', 0) == 0 and summary.get('conflicts', 0) == 0:
+            import_record = apply_markdown_session(session)
+            applied = import_record.summary
+            messages.success(
+                request,
+                f"Markdown import complete. Created {applied['created']} and updated {applied['updated']} cards.",
+            )
+            return redirect('imports:dashboard')
         return redirect('imports:markdown-preview', session_id=session.id)
     anki_form = AnkiImportForm(user=request.user)
     recent_imports = Import.objects.filter(user=request.user).order_by('-created_at')[:10]

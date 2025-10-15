@@ -12,7 +12,7 @@
         <div class="flex items-center justify-between">
             <div>
                 <h2 class="text-lg font-semibold text-gray-700">Progress</h2>
-                <p class="text-sm text-gray-500">{{ progress }}% parsed • {{ summary.creates|default:0 }} new · {{ summary.updates|default:0 }} updates</p>
+                <p class="text-sm text-gray-500">{{ progress }}% parsed - {{ summary.creates|default:0 }} new - {{ summary.updates|default:0 }} updates</p>
             </div>
             <div class="min-w-[160px]">
                 <div class="h-3 rounded-full bg-gray-200">

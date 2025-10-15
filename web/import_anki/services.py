@@ -203,7 +203,8 @@ def process_apkg_archive(*, user, deck: Deck, uploaded_file) -> Import:
                 raise AnkiImportError('collection.anki2 or collection.anki21 not found in package')
 
             connection = sqlite3.connect(collection_path)
-            try:                notes = _load_notes(connection)
+            try:
+                notes = _load_notes(connection)
                 media_map = _load_media_map(tmpdir)
                 deck_paths = _load_deck_paths(connection)
                 deck_cache: dict[tuple[str, ...], Deck] = {(): deck}
@@ -251,7 +252,11 @@ def process_apkg_archive(*, user, deck: Deck, uploaded_file) -> Import:
                             media.append(item)
 
                     deck_parts = deck_paths.get(deck_id, [])
-                    target_deck, created_decks = resolve_deck(deck_parts)
+                    effective_parts = [part for part in deck_parts if part.strip() and part.strip().lower() != 'default']
+                    if not effective_parts:
+                        target_deck, created_decks = deck, []
+                    else:
+                        target_deck, created_decks = resolve_deck(effective_parts)
                     if created_decks:
                         summary['decks_created'] += len(created_decks)
 
