@@ -19,15 +19,25 @@ def _normalise_tags(raw: Iterable[str]) -> list[str]:
 class DeckForm(forms.ModelForm):
     class Meta:
         model = Deck
-        fields = ['name', 'description']
+        fields = ['name', 'parent', 'description']
         widgets = {
             'name': forms.TextInput(attrs={'class': 'w-full border rounded p-2'}),
+            'parent': forms.Select(attrs={'class': 'w-full border rounded p-2'}),
             'description': forms.Textarea(attrs={'class': 'w-full border rounded p-2', 'rows': 3}),
         }
 
     def __init__(self, *args, user=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.user = user
+        parent_field = self.fields['parent']
+        if user is not None:
+            queryset = Deck.objects.for_user(user).order_by('name')
+            if self.instance.pk:
+                queryset = queryset.exclude(pk=self.instance.pk)
+            parent_field.queryset = queryset
+        else:
+            parent_field.queryset = Deck.objects.none()
+        parent_field.empty_label = 'No parent (top level)'
 
     def save(self, commit: bool = True):
         deck = super().save(commit=False)
@@ -59,7 +69,9 @@ class CardForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.user = user
         if user is not None:
-            self.fields['deck'].queryset = Deck.objects.filter(user=user).order_by('name')
+            self.fields['deck'].queryset = Deck.objects.for_user(user).order_by('name')
+        else:
+            self.fields['deck'].queryset = Deck.objects.none()
         if self.instance.pk:
             self.initial['tags'] = ', '.join(self.instance.tags)
 

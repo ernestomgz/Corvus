@@ -8,10 +8,11 @@ from pathlib import Path
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 
-from core.models import Card, ExternalId
+from core.models import Card, Deck, ExternalId
 from import_anki.services import process_apkg_archive
 
 pytestmark = pytest.mark.django_db
+
 
 
 def _build_apkg(
@@ -24,9 +25,12 @@ def _build_apkg(
     card_values: dict | None = None,
     media_map_bytes: bytes | None = None,
     collection_filename: str = 'collection.anki2',
+    deck_map: dict[int, str] | None = None,
 ) -> SimpleUploadedFile:
     media = media or {}
     card_values = card_values or {}
+    deck_map = deck_map or {1: 'Default'}
+    primary_deck_id = next(iter(deck_map.keys()))
     db_path = tmp_path / collection_filename
     if db_path.exists():
         db_path.unlink()
@@ -38,15 +42,20 @@ def _build_apkg(
         'CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER, ord INTEGER, mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER, due INTEGER, ivl INTEGER, factor INTEGER, reps INTEGER, lapses INTEGER, left INTEGER, odue INTEGER, odid INTEGER, flags INTEGER, data TEXT)'
     )
     conn.execute(
+        'CREATE TABLE col (id INTEGER PRIMARY KEY, decks TEXT)'
+    )
+    decks_payload = {str(deck_id): {'name': name} for deck_id, name in deck_map.items()}
+    conn.execute('INSERT INTO col (id, decks) VALUES (?, ?)', (1, json.dumps(decks_payload)))
+    conn.execute(
         'INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-        (1, guid, 1, 0, 0, '', f'{front}\x1f{back}', 0, 0, 0, ''),
+        (1, guid, 1, 0, 0, '', f'{front}{back}', 0, 0, 0, ''),
     )
     conn.execute(
         'INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, lapses, left, odue, odid, flags, data) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
         (
             1,
             1,
-            1,
+            card_values.get('did', primary_deck_id),
             0,
             0,
             0,
@@ -95,6 +104,7 @@ def _build_apkg(
             zf.write(tmp_path / idx, arcname=idx)
     buffer.seek(0)
     return SimpleUploadedFile('sample.apkg', buffer.read(), content_type='application/octet-stream')
+
 
 
 

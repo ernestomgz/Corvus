@@ -9,4 +9,5 @@ urlpatterns = [
     path('next/', review.review_next, name='next'),
     path('reveal/', review.review_reveal, name='reveal'),
     path('grade/', review.review_grade, name='grade'),
+    path('undo/', review.review_undo, name='undo'),
 ]

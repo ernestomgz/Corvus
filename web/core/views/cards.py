@@ -8,6 +8,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 
 from ..forms import CardFilterForm, CardForm
 from ..models import Card
+from ..services.decks import flatten_deck_ids
 
 
 @login_required
@@ -19,7 +20,7 @@ def card_list(request: HttpRequest) -> HttpResponse:
         tag = form.cleaned_data.get('tag')
         query = form.cleaned_data.get('q')
         if deck:
-            cards = cards.filter(deck=deck)
+            cards = cards.filter(deck_id__in=deck.descendant_ids())
         if tag:
             cards = cards.filter(tags__contains=[tag.strip()])
         if query:

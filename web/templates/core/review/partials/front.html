@@ -1,18 +1,30 @@
+{% load card_rendering %}
 <div class="space-y-6">
     <div class="rounded border bg-gray-50 p-6 text-left">
         <h2 class="text-sm uppercase tracking-wide text-gray-500">Front</h2>
-        <p class="mt-3 whitespace-pre-wrap text-lg text-gray-800">{{ card.front_md }}</p>
+        <div class="mt-3 text-lg text-gray-800 space-y-3 rendered-card" data-card-surface="front">{{ card.front_md|render_card }}</div>
     </div>
     <div class="flex flex-wrap items-center justify-between gap-3">
-        <form method="post" action="{% url 'review:reveal' %}" hx-post="{% url 'review:reveal' %}" hx-target="#review-panel" hx-swap="innerHTML">
-            {% csrf_token %}
-            <input type="hidden" name="card_id" value="{{ card.id }}">
-            {% if deck %}
-                <input type="hidden" name="deck_id" value="{{ deck.id }}">
+        <div class="flex w-full flex-wrap gap-2 sm:w-auto">
+            <form method="post" action="{% url 'review:reveal' %}" hx-post="{% url 'review:reveal' %}" hx-target="#review-panel" hx-swap="innerHTML" class="flex-1 sm:flex-none">
+                {% csrf_token %}
+                <input type="hidden" name="card_id" value="{{ card.id }}">
+                {% if deck %}
+                    <input type="hidden" name="deck_id" value="{{ deck.id }}">
+                {% endif %}
+                <button type="submit" data-action="reveal" class="w-full rounded bg-indigo-600 px-6 py-3 text-base font-semibold text-white hover:bg-indigo-700 sm:text-lg">Show Answer</button>
+            </form>
+            {% if can_undo %}
+                <form method="post" action="{% url 'review:undo' %}" hx-post="{% url 'review:undo' %}" hx-target="#review-panel" hx-swap="innerHTML" class="flex-1 sm:flex-none">
+                    {% csrf_token %}
+                    {% if deck %}
+                        <input type="hidden" name="deck_id" value="{{ deck.id }}">
+                    {% endif %}
+                    <button type="submit" class="w-full rounded border border-slate-300 px-6 py-3 text-base font-semibold text-slate-700 hover:bg-slate-100 sm:text-lg">Undo Last</button>
+                </form>
             {% endif %}
-            <button type="submit" class="rounded bg-indigo-600 px-6 py-3 text-lg font-semibold text-white hover:bg-indigo-700">Show Answer</button>
-        </form>
-        <div class="rounded border bg-gray-100 px-4 py-2 text-sm text-gray-600">
+        </div>
+        <div class="w-full rounded border bg-gray-100 px-4 py-2 text-sm text-gray-600 text-center sm:w-auto sm:text-left">
             New {{ summary.new_count }} | Review {{ summary.review_count }} | Due {{ summary.due_count }}
         </div>
     </div>

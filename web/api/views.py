@@ -3,14 +3,18 @@ from __future__ import annotations
 import json
 from typing import Any, Dict
 
+from datetime import datetime, time, timedelta
+
 from django.contrib.auth import authenticate, login, logout
-from django.db.models import Q
+from django.db.models import Q, Count
+from django.db.models.functions import TruncDate
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from accounts.models import User
-from core.models import Card, Deck, Import
+from core.models import Card, Deck, Import, Review, SchedulingState
 from core.scheduling import ensure_state
 from core.services.review import get_next_card, get_today_summary, grade_card_for_user
 from import_anki.services import AnkiImportError, process_apkg_archive
@@ -370,6 +374,146 @@ def review_grade(request: HttpRequest) -> JsonResponse:
     grade_card_for_user(user=user, card_id=card_id, rating=rating_int)
     next_card = get_next_card(user, deck)
     return JsonResponse({'next_available': next_card is not None})
+
+
+@require_http_methods(['GET'])
+def analytics_heatmap_summary(request: HttpRequest) -> JsonResponse:
+    try:
+        user = _require_user(request)
+    except PermissionError as exc:
+        return _json_error(str(exc), status=401)
+
+    today = timezone.localdate()
+    year_param = request.GET.get('year')
+    if year_param:
+        try:
+            selected_year = int(year_param)
+        except ValueError:
+            return _json_error('year must be an integer', status=400)
+        start_date = datetime(selected_year, 1, 1).date()
+        end_date = datetime(selected_year, 12, 31).date()
+    else:
+        try:
+            past_days = int(request.GET.get('past_days', 365))
+            future_days = int(request.GET.get('future_days', 90))
+        except ValueError:
+            return _json_error('past_days and future_days must be integers', status=400)
+        start_date = today - timedelta(days=max(past_days, 0))
+        end_date = today + timedelta(days=max(future_days, 0))
+
+    start_dt = timezone.make_aware(datetime.combine(start_date, time.min))
+    end_dt = timezone.make_aware(datetime.combine(end_date, time.max))
+
+    review_rows = (
+        Review.objects.filter(user=user, reviewed_at__gte=start_dt, reviewed_at__lte=end_dt)
+        .annotate(day=TruncDate('reviewed_at'))
+        .values('day')
+        .annotate(count=Count('id'))
+    )
+    due_rows = (
+          SchedulingState.objects.filter(
+              card__user=user,
+              due_at__isnull=False,
+              due_at__gte=start_dt,
+              due_at__lte=end_dt,
+          )
+          .annotate(day=TruncDate('due_at'))
+          .values('day')
+          .annotate(count=Count('card_id'))
+    )
+
+    day_lookup: dict[str, dict[str, int]] = {}
+    for row in review_rows:
+        key = row['day'].isoformat() if row['day'] else None
+        if not key:
+            continue
+        day_lookup.setdefault(key, {'reviewed': 0, 'due': 0})['reviewed'] = row['count']
+    for row in due_rows:
+        key = row['day'].isoformat() if row['day'] else None
+        if not key:
+            continue
+        day_lookup.setdefault(key, {'reviewed': 0, 'due': 0})['due'] = row['count']
+
+    days: list[dict[str, object]] = []
+    current = start_date
+    current_streak = 0
+    longest_streak = 0
+    running_streak = 0
+    while current <= end_date:
+        key = current.isoformat()
+        info = day_lookup.get(key, {'reviewed': 0, 'due': 0})
+        reviewed = int(info.get('reviewed', 0))
+        due = int(info.get('due', 0))
+        days.append({'date': key, 'reviewed': reviewed, 'due': due})
+        if current <= today:
+            if reviewed > 0:
+                running_streak += 1
+                if current == today:
+                    current_streak = running_streak
+            else:
+                running_streak = 0
+            if running_streak > longest_streak:
+                longest_streak = running_streak
+        current += timedelta(days=1)
+
+    payload = {
+        'start': start_date.isoformat(),
+        'end': end_date.isoformat(),
+        'today': today.isoformat(),
+        'current_streak': current_streak,
+        'longest_streak': longest_streak,
+        'days': days,
+    }
+    return JsonResponse(payload)
+
+
+@require_http_methods(['GET'])
+def analytics_heatmap_day(request: HttpRequest, date_str: str) -> JsonResponse:
+    try:
+        user = _require_user(request)
+    except PermissionError as exc:
+        return _json_error(str(exc), status=401)
+    try:
+        target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return _json_error('invalid date format, expected YYYY-MM-DD', status=400)
+
+    reviews = (
+        Review.objects.filter(user=user, reviewed_at__date=target_date)
+        .select_related('card__deck')
+        .order_by('reviewed_at')
+    )
+    review_payload = [
+        {
+            'card_id': str(review.card_id),
+            'deck': review.card.deck.full_path(),
+            'rating': review.rating,
+            'reviewed_at': timezone.localtime(review.reviewed_at).isoformat(),
+            'front_md': review.card.front_md,
+        }
+        for review in reviews
+    ]
+
+    due_states = (
+        SchedulingState.objects.filter(card__user=user, due_at__date=target_date)
+        .select_related('card__deck')
+        .order_by('due_at')
+    )
+    due_payload = [
+        {
+            'card_id': str(state.card_id),
+            'deck': state.card.deck.full_path(),
+            'queue_status': state.queue_status,
+            'due_at': timezone.localtime(state.due_at).isoformat() if state.due_at else None,
+        }
+        for state in due_states
+    ]
+
+    return JsonResponse({
+        'date': target_date.isoformat(),
+        'reviews': review_payload,
+        'due': due_payload,
+    })
 
 
 @csrf_exempt

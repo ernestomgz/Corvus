@@ -1,0 +1,111 @@
+{% extends 'base.html' %}
+{% load card_rendering %}
+{% block title %}Preview Markdown Import | Corvus{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-5xl space-y-6">
+    <header class="flex flex-col gap-2">
+        <h1 class="text-2xl font-semibold">Preview Markdown Import</h1>
+        <p class="text-sm text-gray-500">Review the cards before applying changes to your collection.</p>
+    </header>
+
+    <section class="rounded border bg-white p-6 shadow space-y-4">
+        <div class="flex items-center justify-between">
+            <div>
+                <h2 class="text-lg font-semibold text-gray-700">Progress</h2>
+                <p class="text-sm text-gray-500">{{ progress }}% parsed - {{ summary.creates|default:0 }} new - {{ summary.updates|default:0 }} updates</p>
+            </div>
+            <div class="min-w-[160px]">
+                <div class="h-3 rounded-full bg-gray-200">
+                    <div class="h-3 rounded-full bg-indigo-500 transition-all" style="width: {{ progress }}%;"></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <form method="post" class="space-y-6">
+        {% csrf_token %}
+        <section class="rounded border bg-white p-6 shadow space-y-4">
+            <h2 class="text-lg font-semibold text-gray-700">New Cards ({{ new_cards|length }})</h2>
+            {% if new_cards %}
+                <div class="grid gap-4 md:grid-cols-2">
+                    {% for card in new_cards %}
+                        <div class="rounded border border-gray-200 bg-gray-50 p-4">
+                            <div class="text-xs uppercase tracking-wide text-gray-500">Deck</div>
+                            <div class="text-sm text-gray-700">{{ card.deck_path|join:' / ' }}</div>
+                            <div class="mt-3 text-xs uppercase tracking-wide text-gray-500">Front</div>
+                            <div class="mt-1 text-sm text-gray-800 rendered-card">{{ card.front_md|render_card }}</div>
+                            <div class="mt-3 text-xs uppercase tracking-wide text-gray-500">Back</div>
+                            <div class="mt-1 text-sm text-gray-800 rendered-card">{{ card.back_md|render_card }}</div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="text-sm text-gray-500">No new cards detected.</p>
+            {% endif %}
+        </section>
+
+        <section class="rounded border bg-white p-6 shadow space-y-4">
+            <div class="flex items-center justify-between">
+                <h2 class="text-lg font-semibold text-gray-700">Updates ({{ update_cards|length }})</h2>
+                <p class="text-xs text-gray-500">Choose <span class="font-semibold">Use imported</span> to apply the new content or <span class="font-semibold">Keep existing</span> to skip.</p>
+            </div>
+            {% if update_cards %}
+                <div class="space-y-6">
+                    {% for card in update_cards %}
+                        <section class="rounded border border-gray-200 bg-white">
+                            <div class="border-b border-gray-200 bg-gray-50 px-4 py-3">
+                                <div class="flex flex-wrap items-center justify-between gap-2">
+                                    <div>
+                                        <div class="text-xs uppercase tracking-wide text-gray-500">Deck</div>
+                                        <div class="text-sm text-gray-700">{{ card.deck_path|join:' / ' }}</div>
+                                    </div>
+                                    <div class="flex items-center gap-3 text-xs text-gray-500">
+                                        <label class="inline-flex items-center gap-1">
+                                            <input type="radio" name="card-{{ card.index }}-decision" value="imported" class="text-indigo-600" checked>
+                                            <span>Use imported</span>
+                                        </label>
+                                        <label class="inline-flex items-center gap-1">
+                                            <input type="radio" name="card-{{ card.index }}-decision" value="existing" class="text-indigo-600">
+                                            <span>Keep existing</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="grid gap-0 md:grid-cols-2">
+                                <div class="border-r border-gray-200 px-4 py-4">
+                                    <div class="text-xs uppercase tracking-wide text-gray-500">Existing</div>
+                                    <div class="mt-2 rounded border border-gray-200 bg-gray-50 p-3">
+                                        <div class="text-xs uppercase tracking-wide text-gray-500">Front</div>
+                                        <div class="mt-1 text-sm text-gray-700 rendered-card">{{ card.existing.front_md|render_card }}</div>
+                                        <div class="mt-3 text-xs uppercase tracking-wide text-gray-500">Back</div>
+                                        <div class="mt-1 text-sm text-gray-700 rendered-card">{{ card.existing.back_md|render_card }}</div>
+                                    </div>
+                                </div>
+                                <div class="px-4 py-4">
+                                    <div class="text-xs uppercase tracking-wide text-gray-500">Imported</div>
+                                    <div class="mt-2 rounded border border-indigo-200 bg-indigo-50 p-3">
+                                        <div class="text-xs uppercase tracking-wide text-indigo-500">Front</div>
+                                        <div class="mt-1 text-sm text-indigo-800 rendered-card">{{ card.front_md|render_card }}</div>
+                                        <div class="mt-3 text-xs uppercase tracking-wide text-indigo-500">Back</div>
+                                        <div class="mt-1 text-sm text-indigo-800 rendered-card">{{ card.back_md|render_card }}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="text-sm text-gray-500">No existing cards will be updated.</p>
+            {% endif %}
+        </section>
+
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="text-xs text-gray-500">Media copied: {{ summary.media_copied|default:0 }}</div>
+            <div class="flex flex-wrap gap-3">
+                <button type="submit" name="action" value="cancel" class="rounded border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+                <button type="submit" name="action" value="apply" class="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Apply Changes</button>
+            </div>
+        </div>
+    </form>
+</div>
+{% endblock %}
