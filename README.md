@@ -25,9 +25,9 @@ docker compose exec web python manage.py seed_demo  # demo user + sample deck
 Credentials after seeding: `demo@example.com` / `demo1234`.
 
 Ready-made import bundles live in `samples/`:
-- `sample_cards.zip` – Markdown/Logseq-style bundle with multiple decks, tags, LaTeX, and media links.
-- `sample.apkg` – Anki package with text/image cards across several decks.
-Import them directly via the UI; no generation script is required.
+- `sample_cards.zip` – Markdown/Logseq-style bundle with nested decks, tags, inline + block LaTeX, Obsidian media embeds, fenced code blocks, and URL examples.
+- `sample.apkg` – Anki package with multi-deck Basic notes that mix inline/block LaTeX, HTML formatting, front/back images, and `[sound:...]` audio references.
+Import them directly via the UI; no generation script is required. The included images and audio were created for this repository, so they can be redistributed without attribution.
 
 ## Tests
 
