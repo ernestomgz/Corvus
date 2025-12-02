@@ -1,4 +1,4 @@
-# Corvus SRS — Phase 1
+# Corvus SRS â€” Phase 1
 
 Self-hosted spaced repetition system built with Django 5, HTMX, Tailwind, and PostgreSQL.
 
@@ -24,11 +24,10 @@ docker compose exec web python manage.py seed_demo  # demo user + sample deck
 
 Credentials after seeding: `demo@example.com` / `demo1234`.
 
-Generate fresh sample import bundles (optional):
-```sh
-docker compose exec web python manage.py build_sample_apkg
-```
-(A Markdown bundle already lives at `samples/sample_cards.zip`; the command above refreshes `samples/sample.apkg`.)
+Ready-made import bundles live in `samples/`:
+- `sample_cards.zip` â€“ Markdown/Logseq-style bundle with multiple decks, tags, LaTeX, and media links.
+- `sample.apkg` â€“ Anki package with text/image cards across several decks.
+Import them directly via the UI; no generation script is required.
 
 ## Tests
 
@@ -51,15 +50,14 @@ The suite covers SM-2 scheduling transitions, importer behaviours, permission bo
 ## Useful Commands
 - `docker compose exec web python manage.py createsuperuser`
 - `docker compose exec web python manage.py seed_demo`
-- `docker compose exec web python manage.py build_sample_apkg`
 - `docker compose exec web python manage.py collectstatic --noinput`
 
 ## Project Structure Highlights
-- `web/srs_app/settings.py` – environment-driven configuration.
-- `web/core/scheduling.py` – SM-2 scheduler implementation.
-- `web/core/services/review.py` – review queue helpers.
-- `web/import_md/services.py`, `web/import_anki/services.py` – importer pipelines.
-- `web/api/views.py` – session-authenticated JSON endpoints.
-- `web/tests/` – pytest suite with factory_boy fixtures.
+- `web/srs_app/settings.py` â€“ environment-driven configuration.
+- `web/core/scheduling.py` â€“ SM-2 scheduler implementation.
+- `web/core/services/review.py` â€“ review queue helpers.
+- `web/import_md/services.py`, `web/import_anki/services.py` â€“ importer pipelines.
+- `web/api/views.py` â€“ session-authenticated JSON endpoints.
+- `web/tests/` â€“ pytest suite with factory_boy fixtures.
 
 Enjoy building with Corvus! Contributions for later phases (export, richer analytics, etc.) can plug into the existing app structure.
