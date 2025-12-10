@@ -12,6 +12,9 @@
                 {% if deck %}
                     <input type="hidden" name="deck_id" value="{{ deck.id }}">
                 {% endif %}
+                {% if study_set %}
+                    <input type="hidden" name="study_set_id" value="{{ study_set.id }}">
+                {% endif %}
                 <button type="submit" data-action="reveal" class="w-full rounded bg-indigo-600 px-6 py-3 text-base font-semibold text-white hover:bg-indigo-700 sm:text-lg">Show Answer</button>
             </form>
             {% if can_undo %}
@@ -20,12 +23,20 @@
                     {% if deck %}
                         <input type="hidden" name="deck_id" value="{{ deck.id }}">
                     {% endif %}
+                    {% if study_set %}
+                        <input type="hidden" name="study_set_id" value="{{ study_set.id }}">
+                    {% endif %}
                     <button type="submit" class="w-full rounded border border-slate-300 px-6 py-3 text-base font-semibold text-slate-700 hover:bg-slate-100 sm:text-lg">Undo Last</button>
                 </form>
             {% endif %}
         </div>
-        <div class="w-full rounded border bg-gray-100 px-4 py-2 text-sm text-gray-600 text-center sm:w-auto sm:text-left">
+        <div class="w-full rounded border bg-gray-100 px-4 py-2 text-sm text-gray-600 text-center sm:w-auto sm:text-left space-y-1">
             New {{ summary.new_count }} | Review {{ summary.review_count }} | Due {{ summary.due_count }}
+            {% if study_set %}
+                <div class="text-xs text-gray-500">Custom set: {{ study_set.name }}</div>
+            {% elif deck %}
+                <div class="text-xs text-gray-500">Deck: {{ deck.full_path }}</div>
+            {% endif %}
         </div>
     </div>
 </div>

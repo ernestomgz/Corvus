@@ -50,16 +50,6 @@ def upload_markdown(request: HttpRequest) -> HttpResponse:
         except MarkdownImportError as exc:
             messages.error(request, f"Import failed: {exc}")
             return redirect('imports:dashboard')
-        payload = session.payload or {}
-        summary = payload.get('summary', {})
-        if summary.get('updates', 0) == 0 and summary.get('conflicts', 0) == 0:
-            import_record = apply_markdown_session(session)
-            applied = import_record.summary
-            messages.success(
-                request,
-                f"Markdown import complete. Created {applied['created']} and updated {applied['updated']} cards.",
-            )
-            return redirect('imports:dashboard')
         return redirect('imports:markdown-preview', session_id=session.id)
     anki_form = AnkiImportForm(user=request.user)
     recent_imports = Import.objects.filter(user=request.user).order_by('-created_at')[:10]
@@ -98,6 +88,7 @@ def preview_markdown(request: HttpRequest, session_id: str) -> HttpResponse:
     progress = 0
     if total:
         progress = min(100, int((processed / total) * 100))
+    has_errors = any(card.get('errors') for card in cards)
 
     if request.method == 'POST':
         action = request.POST.get('action', 'apply')
@@ -105,6 +96,9 @@ def preview_markdown(request: HttpRequest, session_id: str) -> HttpResponse:
             cancel_markdown_session(session)
             messages.info(request, 'Import session cancelled.')
             return redirect('imports:dashboard')
+        if has_errors:
+            messages.error(request, 'Resolve the errors shown in the preview before applying this import.')
+            return redirect('imports:markdown-preview', session_id=session.id)
         decisions: dict[int, str] = {}
         for card in cards:
             index = card.get('index')
@@ -137,6 +131,7 @@ def preview_markdown(request: HttpRequest, session_id: str) -> HttpResponse:
             'update_cards': update_cards,
             'summary': summary,
             'progress': progress,
+            'has_errors': has_errors,
         },
     )
 

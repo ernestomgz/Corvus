@@ -17,6 +17,7 @@ from accounts.models import User
 from core.models import Card, Deck, Import, Review, SchedulingState
 from core.scheduling import ensure_state
 from core.services.review import get_next_card, get_today_summary, grade_card_for_user
+from core.services.card_types import resolve_card_type
 from import_anki.services import AnkiImportError, process_apkg_archive
 from import_md.services import MarkdownImportError, process_markdown_archive
 
@@ -50,12 +51,19 @@ def _deck_to_dict(deck: Deck) -> dict:
     }
 
 
+def _card_type_slug(card: Card) -> str:
+    card_type = getattr(card, 'card_type', None)
+    if not card_type:
+        return 'basic'
+    return getattr(card_type, 'slug', None) or getattr(card_type, 'name', 'basic')
+
+
 def _card_to_dict(card: Card) -> dict:
     state = getattr(card, 'scheduling_state', None) or ensure_state(card)
     return {
         'id': str(card.id),
         'deck_id': card.deck_id,
-        'card_type': card.card_type,
+        'card_type': _card_type_slug(card),
         'front_md': card.front_md,
         'back_md': card.back_md,
         'tags': card.tags,
@@ -207,8 +215,10 @@ def cards_collection(request: HttpRequest) -> JsonResponse:
         deck = Deck.objects.get(id=deck_id, user=user)
     except Deck.DoesNotExist:
         return _json_error('deck not found', status=404)
-    card_type = payload.get('card_type', 'basic')
-    if card_type not in {'basic', 'cloze', 'problem', 'ai'}:
+    card_type_token = payload.get('card_type', 'basic')
+    try:
+        card_type = resolve_card_type(user, card_type_token)
+    except ValueError:
         return _json_error('invalid card_type')
     tags = payload.get('tags', [])
     if not isinstance(tags, list):
@@ -252,10 +262,10 @@ def card_detail(request: HttpRequest, card_id: str) -> JsonResponse:
                 return _json_error('deck not found', status=404)
             card.deck = deck
         if 'card_type' in payload:
-            card_type = payload['card_type']
-            if card_type not in {'basic', 'cloze', 'problem', 'ai'}:
+            try:
+                card.card_type = resolve_card_type(user, payload['card_type'])
+            except ValueError:
                 return _json_error('invalid card_type')
-            card.card_type = card_type
         if 'front_md' in payload:
             card.front_md = payload['front_md']
         if 'back_md' in payload:
@@ -316,7 +326,7 @@ def review_next(request: HttpRequest) -> JsonResponse:
     if not card:
         return JsonResponse({'card_id': None})
     ensure_state(card)
-    return JsonResponse({'card_id': str(card.id), 'card_type': card.card_type, 'front_md': card.front_md})
+    return JsonResponse({'card_id': str(card.id), 'card_type': _card_type_slug(card), 'front_md': card.front_md})
 
 
 @csrf_exempt

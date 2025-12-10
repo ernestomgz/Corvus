@@ -14,6 +14,63 @@ class UserScopedQuerySet(models.QuerySet):
         return self.filter(user=user)
 
 
+class CardType(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='card_types',
+        null=True,
+        blank=True,
+    )
+    name = models.CharField(max_length=255)
+    slug = models.SlugField(max_length=64)
+    description = models.TextField(blank=True)
+    field_schema = models.JSONField(default=list, blank=True)
+    front_template = models.TextField()
+    back_template = models.TextField()
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = UserScopedQuerySet.as_manager()
+
+    class Meta:
+        ordering = ['name']
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'slug'], name='unique_card_type_per_user'),
+            models.UniqueConstraint(
+                fields=['slug'],
+                condition=models.Q(user__isnull=True),
+                name='unique_global_card_type_slug',
+            ),
+        ]
+
+    def __str__(self) -> str:
+        owner = getattr(self.user, 'email', None) or 'global'
+        return f"{self.name} ({owner})"
+
+
+class CardImportFormat(models.Model):
+    FORMAT_CHOICES = [
+        ('markdown', 'Markdown'),
+    ]
+
+    id = models.BigAutoField(primary_key=True)
+    card_type = models.ForeignKey(CardType, on_delete=models.CASCADE, related_name='import_formats')
+    name = models.CharField(max_length=255)
+    format_kind = models.CharField(max_length=32, choices=FORMAT_CHOICES)
+    template = models.TextField()
+    options = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self) -> str:
+        return f"{self.card_type.name}: {self.name}"
+
+
 class Deck(models.Model):
     id = models.BigAutoField(primary_key=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='decks')
@@ -64,23 +121,72 @@ class Deck(models.Model):
         return visited
 
 
-class Card(models.Model):
-    CARD_TYPE_CHOICES = [
-        ('basic', 'Basic'),
-        ('basic_image_front', 'Basic (Image on Front)'),
-        ('basic_image_back', 'Basic (Image on Back)'),
-        ('cloze', 'Cloze'),
-        ('problem', 'Problem'),
-        ('ai', 'AI'),
+class StudySet(models.Model):
+    KIND_DECK = 'deck'
+    KIND_TAG = 'tag'
+    KIND_CHOICES = [
+        (KIND_DECK, 'Deck'),
+        (KIND_TAG, 'Tag'),
     ]
 
+    id = models.BigAutoField(primary_key=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='study_sets')
+    name = models.CharField(max_length=255)
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    deck = models.ForeignKey(Deck, null=True, blank=True, on_delete=models.CASCADE, related_name='study_sets')
+    tag = models.CharField(max_length=255, blank=True)
+    is_favorite = models.BooleanField(default=False)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = UserScopedQuerySet.as_manager()
+
+    class Meta:
+        ordering = ['-is_favorite', 'name']
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    models.Q(kind='deck', deck__isnull=False)
+                    | models.Q(kind='tag', deck__isnull=True)
+                ),
+                name='study_set_requires_matching_deck_state',
+            ),
+            models.CheckConstraint(
+                check=(
+                    models.Q(kind='tag', tag__gt='')
+                    | models.Q(kind='deck')
+                ),
+                name='study_set_requires_tag_for_tag_kind',
+            ),
+            models.UniqueConstraint(
+                fields=['user', 'deck'],
+                condition=models.Q(kind='deck'),
+                name='study_set_unique_deck',
+            ),
+            models.UniqueConstraint(
+                fields=['user', 'tag'],
+                condition=models.Q(kind='tag'),
+                name='study_set_unique_tag',
+            ),
+        ]
+
+    def __str__(self) -> str:
+        if self.kind == self.KIND_TAG:
+            return f"{self.name} (Tag: {self.tag})"
+        if self.deck:
+            return f"{self.name} (Deck: {self.deck.full_path()})"
+        return self.name
+
+
+class Card(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='cards')
     deck = models.ForeignKey(Deck, on_delete=models.CASCADE, related_name='cards')
-    card_type = models.CharField(max_length=32, choices=CARD_TYPE_CHOICES)
+    card_type = models.ForeignKey(CardType, on_delete=models.PROTECT, related_name='cards')
     front_md = models.TextField()
     back_md = models.TextField()
     tags = ArrayField(models.TextField(), blank=True, default=list)
+    field_values = models.JSONField(default=dict, blank=True)
     source_path = models.TextField(null=True, blank=True)
     source_anchor = models.TextField(null=True, blank=True)
     media = models.JSONField(default=list)
@@ -97,7 +203,8 @@ class Card(models.Model):
         ordering = ['-updated_at']
 
     def __str__(self) -> str:
-        return f"{self.card_type}: {self.front_md[:40]}"
+        type_name = getattr(self.card_type, 'name', '')
+        return f"{type_name}: {self.front_md[:40]}"
 
     def add_tag(self, tag: str) -> None:
         normalised = tag.strip()

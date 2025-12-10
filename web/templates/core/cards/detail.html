@@ -25,7 +25,7 @@
         <div>
             <h2 class="text-lg font-semibold text-gray-700">Metadata</h2>
             <dl class="grid gap-1 text-sm text-gray-600">
-                <div class="flex justify-between"><dt class="font-medium">Type</dt><dd>{{ card.get_card_type_display }}</dd></div>
+                <div class="flex justify-between"><dt class="font-medium">Type</dt><dd>{{ card.card_type.name }}</dd></div>
                 <div class="flex justify-between"><dt class="font-medium">Tags</dt><dd>{{ card.tags|join:', ' }}</dd></div>
                 <div class="flex justify-between"><dt class="font-medium">Queue</dt><dd>{{ card.scheduling_state.queue_status }}</dd></div>
                 <div class="flex justify-between"><dt class="font-medium">Due</dt><dd>{{ card.scheduling_state.due_at|date:'Y-m-d H:i' }}</dd></div>

@@ -48,12 +48,17 @@ def flatten_deck_ids(root: Deck, *, include_self: bool = True) -> list[int]:
     return ids
 
 
-def ensure_deck_path(user, root: Deck, path: list[str]) -> tuple[Deck, list[Deck]]:
+def ensure_deck_path(user, root: Deck | None, path: list[str]) -> tuple[Deck, list[Deck]]:
     current = root
     created: list[Deck] = []
-    for name in path:
-        deck, created_flag = Deck.objects.get_or_create(user=user, parent=current, name=name)
+    if current is None and not path:
+        raise ValueError('Cannot resolve deck path without a root deck or folder hierarchy.')
+    for index, name in enumerate(path):
+        parent = current
+        deck, created_flag = Deck.objects.get_or_create(user=user, parent=parent, name=name)
         if created_flag:
             created.append(deck)
         current = deck
+    if current is None:
+        raise ValueError('Unable to resolve deck path.')
     return current, created
