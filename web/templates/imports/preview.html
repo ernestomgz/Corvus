@@ -22,6 +22,12 @@
         </div>
     </section>
 
+    {% if has_errors %}
+        <div class="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            Some notes contain validation errors (missing folders or attachments). Fix the archive and re-upload before applying.
+        </div>
+    {% endif %}
+
     <form method="post" class="space-y-6">
         {% csrf_token %}
         <section class="rounded border bg-white p-6 shadow space-y-4">
@@ -29,13 +35,38 @@
             {% if new_cards %}
                 <div class="grid gap-4 md:grid-cols-2">
                     {% for card in new_cards %}
-                        <div class="rounded border border-gray-200 bg-gray-50 p-4">
-                            <div class="text-xs uppercase tracking-wide text-gray-500">Deck</div>
-                            <div class="text-sm text-gray-700">{{ card.deck_path|join:' / ' }}</div>
-                            <div class="mt-3 text-xs uppercase tracking-wide text-gray-500">Front</div>
-                            <div class="mt-1 text-sm text-gray-800 rendered-card">{{ card.front_md|render_card }}</div>
-                            <div class="mt-3 text-xs uppercase tracking-wide text-gray-500">Back</div>
-                            <div class="mt-1 text-sm text-gray-800 rendered-card">{{ card.back_md|render_card }}</div>
+                        <div class="rounded border {% if card.errors %}border-red-300{% else %}border-gray-200{% endif %} bg-gray-50 p-4 space-y-3">
+                            <div class="flex items-start justify-between gap-4">
+                                <div>
+                                    <div class="text-xs uppercase tracking-wide text-gray-500">Deck</div>
+                                    <div class="text-sm text-gray-700">{{ card.deck_path|join:' / ' }}</div>
+                                </div>
+                                <div class="flex flex-col gap-1 text-xs text-gray-500">
+                                    <label class="inline-flex items-center gap-1">
+                                        <input type="radio" name="card-{{ card.index }}-decision" value="imported" class="text-indigo-600" checked>
+                                        <span>Import</span>
+                                    </label>
+                                    <label class="inline-flex items-center gap-1">
+                                        <input type="radio" name="card-{{ card.index }}-decision" value="skip" class="text-indigo-600">
+                                        <span>Skip</span>
+                                    </label>
+                                </div>
+                            </div>
+                            {% if card.errors %}
+                                <div class="rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700 space-y-1">
+                                    {% for error in card.errors %}
+                                        <p>{{ error }}</p>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                            <div>
+                                <div class="text-xs uppercase tracking-wide text-gray-500">Front</div>
+                                <div class="mt-1 text-sm text-gray-800 rendered-card">{{ card.front_md|render_card }}</div>
+                            </div>
+                            <div>
+                                <div class="text-xs uppercase tracking-wide text-gray-500">Back</div>
+                                <div class="mt-1 text-sm text-gray-800 rendered-card">{{ card.back_md|render_card }}</div>
+                            </div>
                         </div>
                     {% endfor %}
                 </div>
@@ -52,7 +83,7 @@
             {% if update_cards %}
                 <div class="space-y-6">
                     {% for card in update_cards %}
-                        <section class="rounded border border-gray-200 bg-white">
+                        <section class="rounded border {% if card.errors %}border-red-300{% else %}border-gray-200{% endif %} bg-white">
                             <div class="border-b border-gray-200 bg-gray-50 px-4 py-3">
                                 <div class="flex flex-wrap items-center justify-between gap-2">
                                     <div>
@@ -65,10 +96,17 @@
                                             <span>Use imported</span>
                                         </label>
                                         <label class="inline-flex items-center gap-1">
-                                            <input type="radio" name="card-{{ card.index }}-decision" value="existing" class="text-indigo-600">
+                                            <input type="radio" name="card-{{ card.index }}-decision" value="skip" class="text-indigo-600">
                                             <span>Keep existing</span>
                                         </label>
                                     </div>
+                                    {% if card.errors %}
+                                        <div class="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 w-full">
+                                            {% for error in card.errors %}
+                                                <p>{{ error }}</p>
+                                            {% endfor %}
+                                        </div>
+                                    {% endif %}
                                 </div>
                             </div>
                             <div class="grid gap-0 md:grid-cols-2">
@@ -103,7 +141,7 @@
             <div class="text-xs text-gray-500">Media copied: {{ summary.media_copied|default:0 }}</div>
             <div class="flex flex-wrap gap-3">
                 <button type="submit" name="action" value="cancel" class="rounded border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
-                <button type="submit" name="action" value="apply" class="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Apply Changes</button>
+                <button type="submit" name="action" value="apply" class="rounded px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 {% if has_errors %}bg-gray-400 cursor-not-allowed{% else %}bg-indigo-600{% endif %}" {% if has_errors %}disabled{% endif %}>Apply Changes</button>
             </div>
         </div>
     </form>

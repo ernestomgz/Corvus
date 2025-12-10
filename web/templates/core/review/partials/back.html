@@ -17,6 +17,9 @@
                 {% if deck %}
                     <input type="hidden" name="deck_id" value="{{ deck.id }}">
                 {% endif %}
+                {% if study_set %}
+                    <input type="hidden" name="study_set_id" value="{{ study_set.id }}">
+                {% endif %}
                 <button type="submit" data-rating="0" class="w-full rounded bg-red-500 px-4 py-2 text-base font-semibold text-white hover:bg-red-600 sm:text-lg">
                     <span class="block">Again</span>
                     {% if rating_previews %}<span class="block text-xs text-red-100">{{ rating_previews.0.humanized }}</span>{% endif %}
@@ -28,6 +31,9 @@
                 <input type="hidden" name="rating" value="1">
                 {% if deck %}
                     <input type="hidden" name="deck_id" value="{{ deck.id }}">
+                {% endif %}
+                {% if study_set %}
+                    <input type="hidden" name="study_set_id" value="{{ study_set.id }}">
                 {% endif %}
                 <button type="submit" data-rating="1" class="w-full rounded bg-orange-500 px-4 py-2 text-base font-semibold text-white hover:bg-orange-600 sm:text-lg">
                     <span class="block">Hard</span>
@@ -41,6 +47,9 @@
                 {% if deck %}
                     <input type="hidden" name="deck_id" value="{{ deck.id }}">
                 {% endif %}
+                {% if study_set %}
+                    <input type="hidden" name="study_set_id" value="{{ study_set.id }}">
+                {% endif %}
                 <button type="submit" data-rating="2" class="w-full rounded bg-blue-500 px-4 py-2 text-base font-semibold text-white hover:bg-blue-600 sm:text-lg">
                     <span class="block">Good</span>
                     {% if rating_previews %}<span class="block text-xs text-blue-100">{{ rating_previews.2.humanized }}</span>{% endif %}
@@ -53,6 +62,9 @@
                 {% if deck %}
                     <input type="hidden" name="deck_id" value="{{ deck.id }}">
                 {% endif %}
+                {% if study_set %}
+                    <input type="hidden" name="study_set_id" value="{{ study_set.id }}">
+                {% endif %}
                 <button type="submit" data-rating="3" class="w-full rounded bg-green-500 px-4 py-2 text-base font-semibold text-white hover:bg-green-600 sm:text-lg">
                     <span class="block">Easy</span>
                     {% if rating_previews %}<span class="block text-xs text-green-100">{{ rating_previews.3.humanized }}</span>{% endif %}
@@ -64,12 +76,20 @@
                     {% if deck %}
                         <input type="hidden" name="deck_id" value="{{ deck.id }}">
                     {% endif %}
+                    {% if study_set %}
+                        <input type="hidden" name="study_set_id" value="{{ study_set.id }}">
+                    {% endif %}
                     <button type="submit" class="w-full rounded border border-slate-300 px-4 py-2 text-base font-semibold text-slate-700 hover:bg-slate-100 sm:text-lg">Undo Last</button>
                 </form>
             {% endif %}
         </div>
-        <div class="w-full rounded border bg-gray-100 px-4 py-2 text-sm text-gray-600 text-center sm:w-auto sm:text-left">
+        <div class="w-full rounded border bg-gray-100 px-4 py-2 text-sm text-gray-600 text-center sm:w-auto sm:text-left space-y-1">
             New {{ summary.new_count }} | Review {{ summary.review_count }} | Due {{ summary.due_count }}
+            {% if study_set %}
+                <div class="text-xs text-gray-500">Custom set: {{ study_set.name }}</div>
+            {% elif deck %}
+                <div class="text-xs text-gray-500">Deck: {{ deck.full_path }}</div>
+            {% endif %}
         </div>
     </div>
 </div>

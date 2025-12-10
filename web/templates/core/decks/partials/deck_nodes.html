@@ -1,24 +1,41 @@
+{% load study_sets %}
 {% for node in nodes %}
-    <li class="rounded border bg-white p-4 shadow-sm">
-        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+    <li class="rounded border bg-white/90 p-4 shadow-sm">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
-                <h3 class="text-lg font-semibold">{{ node.deck.name }}</h3>
+                <h3 class="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                    {{ node.deck.name }}
+                    {% if favorite_deck_ids and node.deck.id in favorite_deck_ids %}
+                        <span class="text-amber-500 text-sm">★</span>
+                    {% endif %}
+                </h3>
                 {% if node.deck.description %}
-                    <p class="text-sm text-gray-600 mt-1">{{ node.deck.description }}</p>
+                    <p class="text-sm text-gray-600">{{ node.deck.description }}</p>
                 {% endif %}
-                <p class="text-xs text-gray-400 mt-2">Cards (including children): {{ node.total_cards }}</p>
+                <p class="text-xs text-gray-500 mt-1">Cards (incl. children) · {{ node.total_cards }}</p>
                 {% if node.deck.parent %}
-                    <p class="text-xs text-gray-400">Parent: {{ node.deck.parent.full_path }}</p>
+                    <p class="text-xs text-gray-400">Parent · {{ node.deck.parent.full_path }}</p>
                 {% endif %}
             </div>
-            <div class="flex flex-wrap gap-2">
-                <a href="{% url 'review:today' %}?deck_id={{ node.deck.id }}" class="rounded bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Review</a>
-                <a href="{% url 'cards:list' %}?deck={{ node.deck.id }}" class="rounded border border-indigo-200 px-3 py-2 text-sm text-indigo-600 hover:bg-indigo-50">Browse</a>
-                <a href="{% url 'decks:edit' node.deck.id %}" class="rounded border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50">Rename</a>
-                <form method="post" action="{% url 'decks:delete' node.deck.id %}" hx-post="{% url 'decks:delete' node.deck.id %}" hx-target="#deck-list" hx-swap="innerHTML" onsubmit="return confirm('Delete deck {{ node.deck.name }}?');">
-                    {% csrf_token %}
-                    <button type="submit" class="rounded border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50">Delete</button>
-                </form>
+            <div class="flex flex-col items-stretch gap-2 sm:items-end">
+                <a href="{% url 'review:today' %}?deck_id={{ node.deck.id }}" class="inline-flex items-center justify-center rounded bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800">Study this deck</a>
+                <details class="text-sm text-gray-600">
+                    <summary class="cursor-pointer rounded border border-transparent px-2 py-1 text-right hover:bg-gray-50">Manage</summary>
+                    <div class="mt-2 space-y-1 text-right">
+                        <a href="{% url 'cards:list' %}?deck={{ node.deck.id }}" class="block text-gray-600 hover:text-gray-900">Browse cards</a>
+                        <a href="{% url 'decks:edit' node.deck.id %}" class="block text-gray-600 hover:text-gray-900">Rename / move</a>
+                        <form method="post" action="{% url 'study_sets:toggle_deck' node.deck.id %}">
+                            {% csrf_token %}
+                            <button type="submit" class="w-full text-left text-gray-600 hover:text-gray-900">
+                                {% if favorite_deck_ids and node.deck.id in favorite_deck_ids %}Unpin from study sets{% else %}Pin to study sets{% endif %}
+                            </button>
+                        </form>
+                        <form method="post" action="{% url 'decks:delete' node.deck.id %}" hx-post="{% url 'decks:delete' node.deck.id %}" hx-target="#deck-list" hx-swap="innerHTML" onsubmit="return confirm('Delete deck {{ node.deck.name }}?');">
+                            {% csrf_token %}
+                            <button type="submit" class="w-full text-left text-red-600 hover:text-red-700">Delete</button>
+                        </form>
+                    </div>
+                </details>
             </div>
         </div>
         {% if node.children %}

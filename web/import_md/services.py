@@ -7,14 +7,16 @@ import re
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
-from core.models import Card, Deck, ExternalId, Import, ImportSession
+from core.models import Card, CardImportFormat, Deck, ExternalId, Import, ImportSession
 from core.services.cards import infer_card_type
+from core.services.card_types import resolve_card_type
 from core.services.decks import ensure_deck_path
 
 OBSIDIAN_LINK_PATTERN = re.compile(r'!\[\[(?P<path>[^\]]+)\]\]')
@@ -22,18 +24,37 @@ ID_PATTERN = re.compile(r'^\s*id::\s*(?P<id>[\w:-]+)', re.IGNORECASE)
 TAGS_PATTERN = re.compile(r'^\s*tags::\s*(?P<tags>.+)$', re.IGNORECASE)
 MEDIA_PATTERN = re.compile(r'!\[[^\]]*\]\(([^)]+)\)')
 HEADING_PATTERN = re.compile(r'^\s*#+\s*')
+HEADING_CAPTURE_PATTERN = re.compile(r'^\s*(?P<hashes>#{1,6})\s*(?P<title>.+)$')
 
 
 @dataclass
 class ParsedCard:
     front_md: str
     back_md: str
+    context_md: str
     source_path: str
     source_anchor: str | None
     external_key: str
     tags: list[str]
     media: list[dict]
     deck_path: list[str]
+    card_type_slug: str
+    errors: list[str]
+
+
+@dataclass
+class MarkerRule:
+    token: str
+    card_type_slug: str
+    options: dict[str, Any]
+    allow_reverse: bool
+
+
+@dataclass
+class MarkerResolver:
+    pattern: re.Pattern
+    clean_pattern: re.Pattern
+    lookup: dict[str, MarkerRule]
 
 
 class MarkdownImportError(Exception):
@@ -55,9 +76,9 @@ def _normalise_deck_path(parts: list[str]) -> list[str]:
     return cleaned
 
 
-def _strip_root_deck(parts: list[str], root: Deck) -> list[str]:
-    if not parts:
-        return []
+def _strip_root_deck(parts: list[str], root: Deck | None) -> list[str]:
+    if not parts or root is None:
+        return list(parts)
     root_parts = [segment.strip() for segment in root.full_path().split('/') if segment.strip()]
     lower_parts = [segment.lower() for segment in root_parts]
     index = 0
@@ -82,6 +103,74 @@ def _normalise_tags(raw: str | None) -> list[str]:
         if tag not in unique:
             unique.append(tag)
     return unique
+
+
+def _merge_tags(existing: list[str] | None, incoming: list[str] | None) -> list[str]:
+    merged: list[str] = []
+    for source in (existing or []):
+        tag = (source or '').strip()
+        if tag and tag not in merged:
+            merged.append(tag)
+    for source in (incoming or []):
+        tag = (source or '').strip()
+        if tag and tag not in merged:
+            merged.append(tag)
+    return merged
+
+
+def _build_marker_resolver(user) -> MarkerResolver:
+    formats = (
+        CardImportFormat.objects.select_related('card_type')
+        .filter(format_kind='markdown')
+        .filter(Q(card_type__user=user) | Q(card_type__user__isnull=True))
+    )
+    sorted_formats = sorted(formats, key=lambda fmt: 0 if fmt.card_type and fmt.card_type.user_id == user.id else 1)
+    lookup: dict[str, MarkerRule] = {}
+    tokens: list[str] = []
+    for fmt in sorted_formats:
+        card_type = getattr(fmt, 'card_type', None)
+        if not card_type or not card_type.slug:
+            continue
+        options = dict(fmt.options or {})
+        markers = options.get('markers')
+        if isinstance(markers, str):
+            markers = [markers]
+        elif isinstance(markers, list):
+            markers = [item for item in markers if isinstance(item, str)]
+        else:
+            marker_value = options.get('marker')
+            markers = [marker_value] if isinstance(marker_value, str) else []
+        for marker in markers:
+            normalized = marker.strip()
+            if not normalized:
+                continue
+            key = normalized.lower()
+            if key in lookup:
+                continue
+            allow_reverse = bool(options.get('allow_reverse', True))
+            lookup[key] = MarkerRule(
+                token=normalized,
+                card_type_slug=card_type.slug,
+                options=options,
+                allow_reverse=allow_reverse,
+            )
+            tokens.append(normalized)
+    if not lookup:
+        default_marker = '#card'
+        lookup[default_marker.lower()] = MarkerRule(
+            token=default_marker,
+            card_type_slug='basic',
+            options={'marker': default_marker},
+            allow_reverse=True,
+        )
+        tokens.append(default_marker)
+    unique_tokens = sorted({token for token in tokens if token}, key=len, reverse=True)
+    if not unique_tokens:
+        unique_tokens = ['#card']
+    joined = '|'.join(re.escape(token) for token in unique_tokens)
+    marker_regex = re.compile(rf'(?<!\w)(?P<marker>{joined})(?P<reverse>(?:[-/]reverse)?)\b', re.IGNORECASE)
+    clean_pattern = re.compile(rf'(?<!\w)(?:{joined})(?:[-/]reverse)?', re.IGNORECASE)
+    return MarkerResolver(pattern=marker_regex, clean_pattern=clean_pattern, lookup=lookup)
 
 
 def _generate_external_key(source_path: str, line_no: int, front_md: str) -> str:
@@ -113,19 +202,43 @@ def _copy_media(user_id: int, zip_file: zipfile.ZipFile, asset_path: str) -> Tup
     return url, {'name': Path(normalised_asset).name, 'url': url, 'hash': digest}
 
 
-def _rewrite_media_links(text: str, *, user_id: int, zip_file: zipfile.ZipFile, summary: dict) -> Tuple[str, list[dict]]:
+def _rewrite_media_links(
+    text: str, *, user_id: int, zip_file: zipfile.ZipFile, summary: dict, source_dir: str | None = None
+) -> Tuple[str, list[dict], list[str]]:
     media_items: list[dict] = []
+    missing_assets: list[str] = []
+
+    def _candidate_paths(asset: str) -> list[str]:
+        asset_clean = str(Path(asset).as_posix()).lstrip('/').lstrip('./')
+        candidates: list[str] = []
+        if source_dir:
+            base = Path(source_dir)
+            direct = (base / asset_clean).as_posix()
+            attachments = (base / 'attachments' / asset_clean).as_posix()
+            candidates.extend([direct, attachments])
+        candidates.append(asset_clean)
+        unique: list[str] = []
+        for path in candidates:
+            normalised = str(Path(path).as_posix()).lstrip('./')
+            if normalised and normalised not in unique:
+                unique.append(normalised)
+        return unique
 
     def _register(asset: str) -> tuple[str, dict] | None:
-        asset_path = str(Path(asset).as_posix()).lstrip('/')
-        result = _copy_media(user_id, zip_file, asset_path)
-        if result is None:
+        token = (asset or '').strip()
+        if re.match(r'^[a-z]+://', token) or token.startswith('data:'):
             return None
-        url, media_meta = result
-        if media_meta not in media_items:
-            media_items.append(media_meta)
-            summary['media_copied'] += 1
-        return url, media_meta
+        for candidate in _candidate_paths(asset):
+            result = _copy_media(user_id, zip_file, candidate)
+            if result is None:
+                continue
+            url, media_meta = result
+            if media_meta not in media_items:
+                media_items.append(media_meta)
+                summary['media_copied'] += 1
+            return url, media_meta
+        missing_assets.append(asset)
+        return None
 
     def markdown_replacer(match: re.Match) -> str:
         original_path = match.group(1)
@@ -146,13 +259,59 @@ def _rewrite_media_links(text: str, *, user_id: int, zip_file: zipfile.ZipFile, 
 
     rewritten = MEDIA_PATTERN.sub(markdown_replacer, text)
     rewritten = OBSIDIAN_LINK_PATTERN.sub(obsidian_replacer, rewritten)
-    return rewritten, media_items
+    return rewritten, media_items, missing_assets
 
 
 def _clean_front_text(value: str) -> str:
     value = value.strip()
     value = HEADING_PATTERN.sub('', value)
     return value.strip()
+
+
+def _compose_front_text(body: str, context: str) -> str:
+    body = (body or '').strip()
+    context = (context or '').strip()
+    if context and body:
+        return f"{context}\n{body}"
+    if context:
+        return context
+    return body
+
+
+def _build_field_values(parsed: ParsedCard) -> dict:
+    hierarchy = (parsed.context_md or '').strip()
+    title = (parsed.front_md or '').strip()
+    values = {
+        'front': title,
+        'back': parsed.back_md,
+        'hierarchy': hierarchy,
+        'title': title,
+    }
+    if hierarchy:
+        values['context'] = hierarchy
+    return values
+
+
+def _update_heading_stack(line: str, stack: list[tuple[int, str]], clean_pattern: re.Pattern) -> int | None:
+    match = HEADING_CAPTURE_PATTERN.match(line)
+    if not match:
+        return None
+    stripped_line = line.strip()
+    title_only = (match.group('title') or '').strip()
+    marker_candidate = f"#{title_only.lstrip('#')}" if title_only else ''
+    if stripped_line and clean_pattern.fullmatch(stripped_line):
+        return None
+    if marker_candidate and clean_pattern.fullmatch(marker_candidate):
+        return None
+    level = len(match.group('hashes'))
+    title = clean_pattern.sub('', title_only)
+    cleaned = _clean_front_text(title)
+    if not cleaned:
+        return None
+    while stack and stack[-1][0] >= level:
+        stack.pop()
+    stack.append((level, cleaned))
+    return level
 
 
 def _parse_markdown_cards(
@@ -162,23 +321,33 @@ def _parse_markdown_cards(
     user_id: int,
     zip_file: zipfile.ZipFile,
     summary: dict,
+    resolver: MarkerResolver,
     deck_path: list[str] | None = None,
 ) -> List[ParsedCard]:
     lines = content.splitlines()
     parsed_cards: list[ParsedCard] = []
     deck_parts = _normalise_deck_path(list(deck_path or []))
     i = 0
+    heading_stack: list[tuple[int, str]] = []
     while i < len(lines):
         line = lines[i]
-        line_lower = line.lower()
-        marker_index = line_lower.find('#card')
-        if marker_index == -1:
+        heading_level = _update_heading_stack(line, heading_stack, resolver.clean_pattern)
+        marker_match = resolver.pattern.search(line)
+        if not marker_match:
             i += 1
             continue
 
         line_no = i + 1
-        front_before = line[:marker_index].strip()
-        front_after = line[marker_index + len('#card'):].strip()
+        marker_start = marker_match.start()
+        marker_end = marker_match.end()
+        marker_text = (marker_match.group('marker') or '').lower()
+        rule = resolver.lookup.get(marker_text)
+        allow_reverse = rule.allow_reverse if rule else True
+        reverse_flag = bool(marker_match.group('reverse')) and allow_reverse
+        rule_options = dict(rule.options) if rule else {}
+
+        front_before = line[:marker_start].strip()
+        front_after = line[marker_end:].strip()
         front_content = front_before or front_after
         if front_content:
             front_content = _clean_front_text(front_content)
@@ -191,10 +360,16 @@ def _parse_markdown_cards(
                 j -= 1
             front_content = '\n'.join(collected).strip()
             front_content = _clean_front_text(front_content)
-
+            if not front_content and heading_stack:
+                front_content = heading_stack[-1][1]
         i += 1
         anchor = None
         tags: list[str] = []
+        card_errors: list[str] = []
+        source_dir_path = Path(source_path).parent
+        source_dir = source_dir_path.as_posix()
+        if source_dir in {'.', ''}:
+            source_dir = None
 
         if i < len(lines):
             anchor_match = ID_PATTERN.match(lines[i])
@@ -207,13 +382,22 @@ def _parse_markdown_cards(
             if tags_match:
                 tags = _normalise_tags(tags_match.group('tags'))
                 i += 1
+        if not tags:
+            default_tags = rule_options.get('default_tags')
+            if isinstance(default_tags, list):
+                tags = [str(tag).strip() for tag in default_tags if isinstance(tag, str) and tag.strip()]
 
         while i < len(lines) and not lines[i].strip():
             i += 1
 
         back_lines: list[str] = []
-        while i < len(lines) and lines[i].strip():
-            back_lines.append(lines[i])
+        while i < len(lines):
+            candidate = lines[i]
+            if not candidate.strip():
+                break
+            if resolver.pattern.search(candidate):
+                break
+            back_lines.append(candidate)
             i += 1
 
         back_md_raw = '\n'.join(back_lines).strip()
@@ -222,31 +406,71 @@ def _parse_markdown_cards(
         else:
             front_content = _clean_front_text(front_content)
 
-        front_md, media_front = _rewrite_media_links(front_content, user_id=user_id, zip_file=zip_file, summary=summary)
-        back_md, media_back = _rewrite_media_links(back_md_raw, user_id=user_id, zip_file=zip_file, summary=summary)
+        if heading_level is not None:
+            context_titles = [title for level, title in heading_stack if level < heading_level]
+        else:
+            context_titles = [title for _level, title in heading_stack]
+            if context_titles and context_titles[-1].strip().lower() == front_content.strip().lower():
+                context_titles = context_titles[:-1]
+        context_md = ' > '.join([title for title in context_titles if title])
+
+        front_md, media_front, missing_front = _rewrite_media_links(
+            front_content, user_id=user_id, zip_file=zip_file, summary=summary, source_dir=source_dir
+        )
+        back_md, media_back, missing_back = _rewrite_media_links(
+            back_md_raw, user_id=user_id, zip_file=zip_file, summary=summary, source_dir=source_dir
+        )
+
+        suggested_type = rule.card_type_slug if rule else infer_card_type(front_md, back_md)
 
         media: list[dict] = []
         for item in media_front + media_back:
             if item not in media:
                 media.append(item)
 
-        external_key = anchor or _generate_external_key(source_path, line_no, front_md)
-        parsed_cards.append(
-            ParsedCard(
-                front_md=front_md,
-                back_md=back_md,
-                source_path=source_path,
-                source_anchor=anchor,
-                external_key=external_key,
-                tags=tags,
-                media=media,
-                deck_path=list(deck_parts),
+        if missing_front or missing_back:
+            missing_all = sorted(set(missing_front + missing_back))
+            card_errors.append(
+                f"Missing attachment(s): {', '.join(missing_all)}. Expected inside an 'attachments' folder next to {source_path}."
             )
+
+        external_key = anchor or _generate_external_key(source_path, line_no, front_md)
+        base_card = ParsedCard(
+            front_md=front_md,
+            back_md=back_md,
+            context_md=context_md,
+            source_path=source_path,
+            source_anchor=anchor,
+            external_key=external_key,
+            tags=tags,
+            media=media,
+            deck_path=list(deck_parts),
+            card_type_slug=suggested_type,
+            errors=list(card_errors),
         )
+        parsed_cards.append(base_card)
+        if reverse_flag:
+            reverse_key = f"{external_key}__reverse"
+            reverse_type = rule.card_type_slug if rule else infer_card_type(back_md, front_md)
+            parsed_cards.append(
+                ParsedCard(
+                    front_md=back_md,
+                    back_md=front_md,
+                    context_md=context_md,
+                    source_path=source_path,
+                    source_anchor=anchor,
+                    external_key=reverse_key,
+                    tags=tags,
+                    media=media,
+                    deck_path=list(deck_parts),
+                    card_type_slug=reverse_type,
+                    errors=list(card_errors),
+                )
+            )
     return parsed_cards
 
 
-def _collect_markdown_cards(*, user_id: int, uploaded_file) -> Tuple[List[ParsedCard], dict]:
+def _collect_markdown_cards(*, user_id: int, uploaded_file, resolver: MarkerResolver) -> Tuple[List[ParsedCard], dict]:
     summary = {'media_copied': 0}
     data = uploaded_file.read()
     try:
@@ -283,6 +507,7 @@ def _collect_markdown_cards(*, user_id: int, uploaded_file) -> Tuple[List[Parsed
                     user_id=user_id,
                     zip_file=archive,
                     summary=summary,
+                    resolver=resolver,
                     deck_path=deck_parts,
                 )
             )
@@ -291,8 +516,11 @@ def _collect_markdown_cards(*, user_id: int, uploaded_file) -> Tuple[List[Parsed
     return parsed_cards, summary
 
 
-def prepare_markdown_session(*, user, deck: Deck, uploaded_file) -> ImportSession:
-    parsed_cards, parse_summary = _collect_markdown_cards(user_id=user.id, uploaded_file=uploaded_file)
+def prepare_markdown_session(*, user, deck: Deck | None, uploaded_file) -> ImportSession:
+    resolver = _build_marker_resolver(user)
+    parsed_cards, parse_summary = _collect_markdown_cards(
+        user_id=user.id, uploaded_file=uploaded_file, resolver=resolver
+    )
     external_keys = [card.external_key for card in parsed_cards]
     existing_map = {
         external.external_key: external
@@ -305,14 +533,30 @@ def prepare_markdown_session(*, user, deck: Deck, uploaded_file) -> ImportSessio
     create_count = 0
     update_count = 0
     diff_count = 0
+    has_invalid_cards = False
 
     for index, parsed in enumerate(parsed_cards):
         parsed.deck_path = _strip_root_deck(_normalise_deck_path(parsed.deck_path), deck)
+        if deck is None and not parsed.deck_path:
+            parsed.errors.append(
+                f"File '{parsed.source_path}' must be inside a folder in the archive when no destination deck is selected."
+            )
+        card_errors = list(parsed.errors)
+        if card_errors:
+            has_invalid_cards = True
         external = existing_map.get(parsed.external_key)
         existing_payload = None
         has_changes = False
+        incoming_tags = list(parsed.tags)
+        display_tags = incoming_tags
+        field_values = _build_field_values(parsed)
+        hierarchy_value = field_values.get('hierarchy', '')
+        title_value = field_values.get('title') or field_values.get('front') or parsed.front_md
+        display_front = _compose_front_text(title_value, hierarchy_value)
+        display_back = field_values.get('back', parsed.back_md)
         if external and external.card.user == user:
             existing_card = external.card
+            display_tags = _merge_tags(existing_card.tags, incoming_tags)
             existing_payload = {
                 'card_id': str(existing_card.id),
                 'deck_id': existing_card.deck_id,
@@ -321,12 +565,13 @@ def prepare_markdown_session(*, user, deck: Deck, uploaded_file) -> ImportSessio
                 'back_md': existing_card.back_md,
                 'tags': existing_card.tags,
                 'media': existing_card.media,
-                'card_type': existing_card.card_type,
+                'card_type': existing_card.card_type.slug if existing_card.card_type else 'basic',
+                'field_values': existing_card.field_values,
             }
             has_changes = (
-                existing_card.front_md != parsed.front_md
-                or existing_card.back_md != parsed.back_md
-                or existing_card.tags != parsed.tags
+                existing_card.front_md != display_front
+                or existing_card.back_md != display_back
+                or existing_card.tags != display_tags
                 or existing_card.media != parsed.media
             )
             update_count += 1
@@ -341,15 +586,19 @@ def prepare_markdown_session(*, user, deck: Deck, uploaded_file) -> ImportSessio
             {
                 'index': index,
                 'external_key': parsed.external_key,
-                'front_md': parsed.front_md,
-                'back_md': parsed.back_md,
-                'tags': parsed.tags,
+                'front_md': display_front,
+                'back_md': display_back,
+                'tags': display_tags,
                 'media': parsed.media,
                 'source_path': parsed.source_path,
                 'source_anchor': parsed.source_anchor,
                 'deck_path': parsed.deck_path,
                 'existing': existing_payload,
                 'has_changes': has_changes,
+                'card_type': parsed.card_type_slug,
+                'field_values': field_values,
+                'context': parsed.context_md,
+                'errors': card_errors,
             }
         )
 
@@ -361,13 +610,14 @@ def prepare_markdown_session(*, user, deck: Deck, uploaded_file) -> ImportSessio
         total=len(session_cards),
         processed=len(session_cards),
         payload={
-            'root_deck_id': deck.id,
+            'root_deck_id': deck.id if deck else None,
             'cards': session_cards,
             'summary': {
                 'creates': create_count,
                 'updates': update_count,
                 'conflicts': diff_count,
                 'media_copied': parse_summary.get('media_copied', 0),
+                'has_errors': has_invalid_cards,
             },
         },
     )
@@ -383,10 +633,19 @@ def apply_markdown_session(session: ImportSession, *, decisions: Dict[int, str] 
     if not cards_payload:
         raise MarkdownImportError('Import session payload is empty.')
 
-    try:
-        root_deck = Deck.objects.get(id=payload.get('root_deck_id'), user=session.user)
-    except Deck.DoesNotExist as exc:
-        raise MarkdownImportError('Root deck no longer exists.') from exc
+    invalid_cards = [card for card in cards_payload if card.get('errors')]
+    if invalid_cards:
+        sample_errors = invalid_cards[0].get('errors') or []
+        detail = sample_errors[0] if sample_errors else 'validation errors were found'
+        raise MarkdownImportError(f'Resolve the card errors before applying this import. Example: {detail}')
+
+    root_deck_id = payload.get('root_deck_id')
+    root_deck = None
+    if root_deck_id:
+        try:
+            root_deck = Deck.objects.get(id=root_deck_id, user=session.user)
+        except Deck.DoesNotExist as exc:
+            raise MarkdownImportError('Root deck no longer exists.') from exc
 
     decisions = decisions or {}
     summary = {
@@ -397,13 +656,18 @@ def apply_markdown_session(session: ImportSession, *, decisions: Dict[int, str] 
         'decks_created': 0,
     }
 
-    deck_cache: dict[tuple[str, ...], Deck] = {(): root_deck}
+    deck_cache: dict[tuple[str, ...], Deck] = {}
+    if root_deck:
+        deck_cache[()] = root_deck
 
     def resolve_deck(parts: list[str]) -> tuple[Deck, list[Deck]]:
         key = tuple(parts)
         if key in deck_cache:
             return deck_cache[key], []
-        target, created = ensure_deck_path(session.user, root_deck, parts)
+        try:
+            target, created = ensure_deck_path(session.user, root_deck, parts)
+        except ValueError as exc:
+            raise MarkdownImportError(str(exc)) from exc
         deck_cache[key] = target
         return target, created
 
@@ -413,6 +677,10 @@ def apply_markdown_session(session: ImportSession, *, decisions: Dict[int, str] 
             decision = decisions.get(index, 'imported')
             deck_parts = _strip_root_deck(_normalise_deck_path(card_data.get('deck_path', [])), root_deck)
             if not deck_parts:
+                if not root_deck:
+                    raise MarkdownImportError(
+                        f"Card '{card_data.get('external_key')}' is missing a folder path. Place the note inside a folder or select a destination deck."
+                    )
                 target_deck, created_decks = root_deck, []
             else:
                 target_deck, created_decks = resolve_deck(deck_parts)
@@ -420,20 +688,30 @@ def apply_markdown_session(session: ImportSession, *, decisions: Dict[int, str] 
                 summary['decks_created'] += len(created_decks)
 
             existing_payload = card_data.get('existing')
+            fallback_slug = existing_payload.get('card_type') if isinstance(existing_payload, dict) else None
+            card_type_slug = card_data.get('card_type') or fallback_slug or infer_card_type(
+                card_data['front_md'], card_data['back_md']
+            )
+            card_type = resolve_card_type(session.user, card_type_slug)
+            field_values = dict(card_data.get('field_values') or {})
+            if card_data.get('context') and 'context' not in field_values:
+                field_values['context'] = card_data['context']
+
             if not existing_payload:
-                if decision == 'existing':
+                if decision in {'existing', 'skip'}:
                     summary['skipped'] += 1
                     continue
                 card = Card.objects.create(
                     user=session.user,
                     deck=target_deck,
-                    card_type=infer_card_type(card_data['front_md'], card_data['back_md']),
+                    card_type=card_type,
                     front_md=card_data['front_md'],
                     back_md=card_data['back_md'],
                     tags=card_data.get('tags', []),
                     media=card_data.get('media', []),
                     source_path=card_data.get('source_path'),
                     source_anchor=card_data.get('source_anchor'),
+                    field_values=field_values,
                 )
                 ExternalId.objects.create(card=card, system='logseq', external_key=card_data['external_key'])
                 summary['created'] += 1
@@ -443,33 +721,33 @@ def apply_markdown_session(session: ImportSession, *, decisions: Dict[int, str] 
                 existing_card = Card.objects.get(id=existing_payload['card_id'], user=session.user)
             except (KeyError, Card.DoesNotExist):
                 # Card disappeared; treat as new card.
-                if decision == 'existing':
+                if decision in {'existing', 'skip'}:
                     summary['skipped'] += 1
                     continue
                 card = Card.objects.create(
                     user=session.user,
                     deck=target_deck,
-                    card_type=infer_card_type(card_data['front_md'], card_data['back_md']),
+                    card_type=card_type,
                     front_md=card_data['front_md'],
                     back_md=card_data['back_md'],
                     tags=card_data.get('tags', []),
                     media=card_data.get('media', []),
                     source_path=card_data.get('source_path'),
                     source_anchor=card_data.get('source_anchor'),
+                    field_values=field_values,
                 )
                 ExternalId.objects.get_or_create(card=card, system='logseq', external_key=card_data['external_key'])
                 summary['created'] += 1
                 continue
 
-            if decision == 'existing':
+            if decision in {'existing', 'skip'}:
                 summary['skipped'] += 1
                 continue
 
             basic_types = {'basic', 'basic_image_front', 'basic_image_back'}
-            if (existing_card.card_type or 'basic') in basic_types:
-                existing_card.card_type = infer_card_type(
-                    card_data['front_md'], card_data['back_md'], default=existing_card.card_type or 'basic'
-                )
+            current_slug = existing_card.card_type.slug if existing_card.card_type else 'basic'
+            if current_slug in basic_types and card_type_slug:
+                existing_card.card_type = resolve_card_type(session.user, card_type_slug)
             existing_card.front_md = card_data['front_md']
             existing_card.back_md = card_data['back_md']
             existing_card.tags = card_data.get('tags', [])
@@ -477,6 +755,7 @@ def apply_markdown_session(session: ImportSession, *, decisions: Dict[int, str] 
             existing_card.source_path = card_data.get('source_path')
             existing_card.source_anchor = card_data.get('source_anchor')
             existing_card.deck = target_deck
+            existing_card.field_values = field_values
             existing_card.save(
                 update_fields=[
                     'front_md',
@@ -487,6 +766,7 @@ def apply_markdown_session(session: ImportSession, *, decisions: Dict[int, str] 
                     'source_anchor',
                     'deck',
                     'card_type',
+                    'field_values',
                     'updated_at',
                 ]
             )

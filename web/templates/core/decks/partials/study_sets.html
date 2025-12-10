@@ -1,0 +1,50 @@
+{% load study_sets %}
+{% if study_sets %}
+    <ul class="space-y-3">
+        {% for study_set in study_sets %}
+            {% with summary=study_set_summaries|study_summary:study_set %}
+                <li class="rounded border bg-white/90 p-4 shadow-sm">
+                    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <p class="text-xs uppercase tracking-wide text-gray-500">
+                                {% if study_set.kind == 'tag' %}
+                                    Tag · {{ study_set.tag }}
+                                {% elif study_set.deck %}
+                                    Deck · {{ study_set.deck.full_path }}
+                                {% else %}
+                                    Custom filter
+                                {% endif %}
+                            </p>
+                            <h3 class="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                                {{ study_set.name }}
+                                {% if study_set.is_favorite %}
+                                    <span class="text-amber-500 text-sm" aria-label="Pinned">★</span>
+                                {% endif %}
+                            </h3>
+                            <p class="text-sm text-gray-500">Due {{ summary.due_count|default:0 }} · Review {{ summary.review_count|default:0 }} · New {{ summary.new_count|default:0 }}</p>
+                        </div>
+                        <div class="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+                            <a href="{% url 'review:today' %}?study_set_id={{ study_set.id }}" class="inline-flex items-center justify-center rounded bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800">Start</a>
+                            <div class="flex items-center justify-end gap-2 text-xs text-gray-500">
+                                <form method="post" action="{% url 'study_sets:toggle_pin' study_set.id %}" hx-post="{% url 'study_sets:toggle_pin' study_set.id %}" hx-target="#study-sets-panel" hx-swap="outerHTML">
+                                    {% csrf_token %}
+                                    <button type="submit" class="rounded border border-transparent px-2 py-1 hover:bg-gray-100">
+                                        {% if study_set.is_favorite %}Unpin{% else %}Pin{% endif %}
+                                    </button>
+                                </form>
+                                <form method="post" action="{% url 'study_sets:delete' study_set.id %}" hx-post="{% url 'study_sets:delete' study_set.id %}" hx-target="#study-sets-panel" hx-swap="outerHTML" onsubmit="return confirm('Remove study set {{ study_set.name }}?');">
+                                    {% csrf_token %}
+                                    <button type="submit" class="rounded border border-transparent px-2 py-1 hover:bg-red-50 text-red-600">Remove</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </li>
+            {% endwith %}
+        {% endfor %}
+    </ul>
+{% else %}
+    <div class="rounded border border-dashed bg-white p-6 text-center text-gray-500">
+        No custom study sets yet. Create one below to save your favorite mix of decks or tags.
+    </div>
+{% endif %}

@@ -1,0 +1,30 @@
+{% if study_set_form %}
+    <form method="post" action="{% url 'study_sets:create' %}" hx-post="{% url 'study_sets:create' %}" hx-target="#study-sets-panel" hx-swap="outerHTML" class="space-y-3">
+        {% csrf_token %}
+        <div class="space-y-1">
+            {{ study_set_form.name.label_tag }}
+            {{ study_set_form.name }}
+            {% if study_set_form.name.errors %}<p class="text-xs text-red-600">{{ study_set_form.name.errors.0 }}</p>{% endif %}
+        </div>
+        <div class="space-y-1">
+            <p class="text-xs font-medium uppercase tracking-wide text-gray-500">Preset type</p>
+            <div class="space-y-1 text-sm text-gray-700">
+                {{ study_set_form.kind }}
+            </div>
+            {% if study_set_form.kind.errors %}<p class="text-xs text-red-600">{{ study_set_form.kind.errors.0 }}</p>{% endif %}
+        </div>
+        <div class="space-y-1">
+            {{ study_set_form.deck.label_tag }}
+            {{ study_set_form.deck }}
+            {% if study_set_form.deck.errors %}<p class="text-xs text-red-600">{{ study_set_form.deck.errors.0 }}</p>{% endif %}
+        </div>
+        <div class="space-y-1">
+            {{ study_set_form.tag.label_tag }}
+            {{ study_set_form.tag }}
+            {% if study_set_form.tag.errors %}<p class="text-xs text-red-600">{{ study_set_form.tag.errors.0 }}</p>{% endif %}
+        </div>
+        <button type="submit" class="w-full rounded bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800">Save preset</button>
+    </form>
+{% else %}
+    <p class="text-sm text-gray-500">Unable to load study set form.</p>
+{% endif %}

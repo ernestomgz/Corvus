@@ -5,7 +5,12 @@ import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 
 from core.models import Card, Deck
-from import_md.services import apply_markdown_session, prepare_markdown_session, process_markdown_archive
+from import_md.services import (
+    MarkdownImportError,
+    apply_markdown_session,
+    prepare_markdown_session,
+    process_markdown_archive,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -135,14 +140,175 @@ def test_apply_markdown_session_creates_child_decks(user_factory, deck_factory):
 def test_md_card_marker_variations(user_factory, deck_factory):
     user = user_factory()
     deck = deck_factory(user=user)
-    markdown = "# Question 1 #card\nFirst answer\n\n# Question 2\n#card\nSecond answer"
+    markdown = "## Question 1 #card\nFirst answer\n\nQuestion 2 #card\nSecond answer"
     archive = _build_zip({'notes.md': markdown})
     record = process_markdown_archive(user=user, deck=deck, uploaded_file=archive)
     assert record.summary['created'] == 2
     cards = Card.objects.filter(user=user).order_by('created_at')
     fronts = [card.front_md for card in cards]
     backs = [card.back_md for card in cards]
-    assert fronts[0] == 'Question 1'
+    assert fronts[0].splitlines()[-1] == 'Question 1'
     assert backs[0] == 'First answer'
-    assert fronts[1] == 'Question 2'
+    assert fronts[1].splitlines()[-1] == 'Question 2'
     assert backs[1] == 'Second answer'
+
+
+def test_md_card_reverse_marker_creates_reverse_copy(user_factory, deck_factory):
+    user = user_factory()
+    deck = deck_factory(user=user)
+    markdown = "## Capital of France #card/reverse\nParis"
+    archive = _build_zip({'world.md': markdown})
+    record = process_markdown_archive(user=user, deck=deck, uploaded_file=archive)
+    assert record.summary['created'] == 2
+    cards = Card.objects.filter(user=user).order_by('created_at')
+    assert cards.count() == 2
+    assert cards[0].front_md.splitlines()[-1] == 'Capital of France'
+    assert cards[0].back_md == 'Paris'
+    assert cards[1].front_md.splitlines()[-1] == 'Paris'
+    assert cards[1].back_md == 'Capital of France'
+
+
+def test_prepare_session_requires_folders_without_root_deck(user_factory):
+    user = user_factory()
+    archive = _build_zip({'note.md': '#card Lonely\n\nBack'})
+    session = prepare_markdown_session(user=user, deck=None, uploaded_file=archive)
+    payload = session.payload
+    assert payload['summary']['has_errors'] is True
+    card = payload['cards'][0]
+    assert any('folder' in error.lower() for error in card['errors'])
+
+
+def test_prepare_session_detects_missing_attachments(user_factory):
+    user = user_factory()
+    markdown = '#card Diagram\n\n![[attachments/missing.png]]'
+    archive = _build_zip({'Science/note.md': markdown})
+    session = prepare_markdown_session(user=user, deck=None, uploaded_file=archive)
+    card = session.payload['cards'][0]
+    assert any('missing attachment' in error.lower() for error in card['errors'])
+    with pytest.raises(MarkdownImportError):
+        apply_markdown_session(session)
+
+
+def test_apply_session_builds_decks_from_archive_when_no_root(user_factory):
+    user = user_factory()
+    markdown = '#card Integral rules\n\nRemember the basics.'
+    archive = _build_zip({'Mathematics/Equations/differentials.md': markdown})
+    session = prepare_markdown_session(user=user, deck=None, uploaded_file=archive)
+    record = apply_markdown_session(session)
+    assert record.summary['created'] == 1
+    math = Deck.objects.get(user=user, parent=None, name='Mathematics')
+    equations = Deck.objects.get(user=user, parent=math, name='Equations')
+    card = Card.objects.get(user=user)
+    assert card.deck == equations
+
+
+def test_markdown_hierarchy_populates_front_lines(user_factory, deck_factory):
+    user = user_factory()
+    deck = deck_factory(user=user)
+    markdown = "# Combinatorics\n## Newton binomial\n### Formula #card\n$$(a+b)^n = \\sum_{j=0}^n \\binom{n}{j} a^{n-j} b^j$$"
+    archive = _build_zip({'math.md': markdown})
+    record = process_markdown_archive(user=user, deck=deck, uploaded_file=archive)
+    assert record.summary['created'] == 1
+    card = Card.objects.get(user=user)
+    lines = card.front_md.splitlines()
+    assert lines[0] == 'Combinatorics > Newton binomial'
+    assert lines[1] == 'Formula'
+
+
+def test_markdown_hierarchy_when_marker_on_next_line(user_factory, deck_factory):
+    user = user_factory()
+    deck = deck_factory(user=user)
+    markdown = (
+        "# Functions\n"
+        "## Definition\n"
+        "### Scalar Fields\n"
+        "\n"
+        "#card\n"
+        "A scalar field maps each point to a scalar value."
+    )
+    archive = _build_zip({'math.md': markdown})
+    record = process_markdown_archive(user=user, deck=deck, uploaded_file=archive)
+    assert record.summary['created'] == 1
+    card = Card.objects.get(user=user)
+    lines = card.front_md.splitlines()
+    assert lines[0] == 'Functions > Definition'
+    assert lines[1] == 'Scalar Fields'
+
+
+def test_markdown_hierarchy_persists_after_marker_only_lines(user_factory, deck_factory):
+    user = user_factory()
+    deck = deck_factory(user=user)
+    markdown = (
+        "# Functions\n"
+        "## Definition\n"
+        "### Scalar Fields\n"
+        "\n"
+        "#card\n"
+        "A scalar field description.\n"
+        "\n"
+        "## Types of Functions\n"
+        "\n"
+        "**Injective** #card\n"
+        "One-to-one mapping.\n"
+    )
+    archive = _build_zip({'math.md': markdown})
+    record = process_markdown_archive(user=user, deck=deck, uploaded_file=archive)
+    assert record.summary['created'] == 2
+    cards = list(Card.objects.filter(user=user).order_by('created_at'))
+    assert len(cards) == 2
+    first_lines = cards[0].front_md.splitlines()
+    assert first_lines[0] == 'Functions > Definition'
+    assert first_lines[1] == 'Scalar Fields'
+    second_lines = cards[1].front_md.splitlines()
+    assert second_lines[0] == 'Functions > Types of Functions'
+    assert second_lines[1] == 'Injective'
+
+
+def test_markdown_inline_card_in_list(user_factory, deck_factory):
+    user = user_factory()
+    deck = deck_factory(user=user)
+    markdown = (
+        "# Completing Squares\n"
+        "## Standard Forms\n"
+        "1. **Form 1:** #card\n"
+        "ax^2 + bx + c = 0\n"
+        "\n"
+        "### Formula\n"
+        "#card\n"
+        "For a quadratic...\n"
+    )
+    archive = _build_zip({'math.md': markdown})
+    record = process_markdown_archive(user=user, deck=deck, uploaded_file=archive)
+    assert record.summary['created'] == 2
+    cards = list(Card.objects.filter(user=user).order_by('created_at'))
+    assert cards[0].front_md.splitlines()[0] == 'Completing Squares > Standard Forms'
+
+
+def test_import_uses_card_type_marker(user_factory, deck_factory):
+    user = user_factory()
+    deck = deck_factory(user=user)
+    markdown = "## Identify plant #photo-card\n![](attachments/leaf.png)\n\nLeaf shape meaning"
+    archive = _build_zip({'Media/note.md': markdown}, media={'Media/attachments/leaf.png': b'image-bytes'})
+    record = process_markdown_archive(user=user, deck=deck, uploaded_file=archive)
+    assert record.summary['created'] == 1
+    card = Card.objects.get(user=user)
+    assert card.card_type.slug == 'photo'
+
+
+def test_import_updates_merge_tags(user_factory, deck_factory):
+    user = user_factory()
+    deck = deck_factory(user=user)
+    markdown = '#card Fact\nid:: merge_demo\ntags:: math\n\nAnswer'
+    archive = _build_zip({'note.md': markdown})
+    record = process_markdown_archive(user=user, deck=deck, uploaded_file=archive)
+    assert record.summary['created'] == 1
+    card = Card.objects.get(user=user)
+    card.tags.append('custom')
+    card.save(update_fields=['tags'])
+
+    updated_markdown = '#card Fact updated\nid:: merge_demo\ntags:: spaced\n\nNew answer'
+    updated_archive = _build_zip({'note.md': updated_markdown})
+    record2 = process_markdown_archive(user=user, deck=deck, uploaded_file=updated_archive)
+    assert record2.summary['updated'] == 1
+    card.refresh_from_db()
+    assert card.tags == ['math', 'custom', 'spaced']

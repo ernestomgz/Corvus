@@ -6,7 +6,7 @@ from core.models import Deck
 
 
 class MarkdownImportForm(forms.Form):
-    deck = forms.ModelChoiceField(queryset=Deck.objects.none())
+    deck = forms.ModelChoiceField(queryset=Deck.objects.none(), required=False)
     archive = forms.FileField()
 
     def __init__(self, *args, user=None, **kwargs):

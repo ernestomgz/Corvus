@@ -8,7 +8,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from ..models import Card, Deck, Review, SchedulingState
+from ..models import Card, Deck, Review, SchedulingState, StudySet
 from ..scheduling import (
     GradeResult,
     SchedulerConfig,
@@ -33,16 +33,76 @@ class TodaySummary:
     due_count: int
 
 
-def _scoped_states(user, deck: Optional[Deck] = None):
-    qs = SchedulingState.objects.select_related('card', 'card__deck').filter(card__user=user)
+@dataclass(frozen=True)
+class StudyScope:
+    deck: Optional[Deck] = None
+    tag: Optional[str] = None
+    study_set: Optional[StudySet] = None
+
+    @classmethod
+    def from_deck(cls, deck: Deck | None):
+        if deck is None:
+            return None
+        return cls(deck=deck)
+
+    @classmethod
+    def from_study_set(cls, study_set: StudySet | None):
+        if study_set is None:
+            return None
+        if study_set.kind == StudySet.KIND_DECK:
+            return cls(deck=study_set.deck, study_set=study_set)
+        if study_set.kind == StudySet.KIND_TAG:
+            return cls(tag=study_set.tag, study_set=study_set)
+        return cls(study_set=study_set)
+
+    @property
+    def deck_target(self) -> Optional[Deck]:
+        if self.deck:
+            return self.deck
+        if self.study_set and self.study_set.kind == StudySet.KIND_DECK:
+            return self.study_set.deck
+        return None
+
+    @property
+    def tag_value(self) -> Optional[str]:
+        if self.tag:
+            return self.tag
+        if self.study_set and self.study_set.kind == StudySet.KIND_TAG:
+            return self.study_set.tag
+        return None
+
+    def history_key(self) -> str:
+        if self.study_set:
+            return f"study_set:{self.study_set.id}"
+        deck = self.deck_target
+        if deck:
+            return f"deck:{deck.id}"
+        return 'all'
+
+
+def _resolve_scope(deck: Optional[Deck], scope: Optional[StudyScope]) -> Optional[StudyScope]:
+    if scope:
+        return scope
     if deck is not None:
-        qs = qs.filter(card__deck_id__in=deck.descendant_ids())
+        return StudyScope.from_deck(deck)
+    return None
+
+
+def _scoped_states(user, deck: Optional[Deck] = None, scope: Optional[StudyScope] = None):
+    resolved_scope = _resolve_scope(deck, scope)
+    qs = SchedulingState.objects.select_related('card', 'card__deck').filter(card__user=user)
+    target_deck = resolved_scope.deck_target if resolved_scope else None
+    if target_deck is not None:
+        qs = qs.filter(card__deck_id__in=target_deck.descendant_ids())
+    tag_value = resolved_scope.tag_value if resolved_scope else None
+    if tag_value:
+        qs = qs.filter(card__tags__contains=[tag_value])
     return qs
 
 
-def get_today_summary(user, deck: Optional[Deck] = None, *, now=None) -> TodaySummary:
+def get_today_summary(user, deck: Optional[Deck] = None, *, now=None, scope: Optional[StudyScope] = None) -> TodaySummary:
     now = now or timezone.now()
-    states = _scoped_states(user, deck)
+    states = _scoped_states(user, deck, scope)
     learning_due = states.filter(queue_status__in=['learn', 'relearn'], due_at__lte=now)
     review_due = states.filter(queue_status='review', due_at__lte=now)
     new_cards = states.filter(queue_status='new')
@@ -53,10 +113,17 @@ def get_today_summary(user, deck: Optional[Deck] = None, *, now=None) -> TodaySu
     )
 
 
-def get_next_card(user, deck: Optional[Deck] = None, *, config: Optional[SchedulerConfig] = None, now=None) -> Optional[Card]:
+def get_next_card(
+    user,
+    deck: Optional[Deck] = None,
+    *,
+    config: Optional[SchedulerConfig] = None,
+    now=None,
+    scope: Optional[StudyScope] = None,
+) -> Optional[Card]:
     now = now or timezone.now()
     config = config or get_scheduler_config()
-    states = _scoped_states(user, deck)
+    states = _scoped_states(user, deck, scope)
 
     learning = states.filter(queue_status__in=['learn', 'relearn'], due_at__lte=now).order_by('due_at', 'card__created_at')
     state = learning.first()

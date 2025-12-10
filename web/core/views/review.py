@@ -9,12 +9,19 @@ from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 
-from ..models import Card, Deck, Review, SchedulingState
+from ..models import Card, Deck, Review, SchedulingState, StudySet
 from ..scheduling import ensure_state
-from ..services.review import build_rating_previews, get_next_card, get_today_summary, grade_card_for_user
+from ..services.review import (
+    StudyScope,
+    build_rating_previews,
+    get_next_card,
+    get_today_summary,
+    grade_card_for_user,
+)
+from ..services.study_sets import fetch_study_sets_with_summaries
 
 REVIEW_HISTORY_SESSION_KEY = 'review_history'
-REVIEW_HISTORY_DECK_KEY = 'review_history_deck'
+REVIEW_HISTORY_SCOPE_KEY = 'review_history_scope'
 REVIEW_HISTORY_LIMIT = 20
 
 
@@ -58,6 +65,14 @@ def _get_review_history(request: HttpRequest) -> List[Dict[str, Any]]:
     return history
 
 
+def _has_history_for_scope(request: HttpRequest, scope: Optional[StudyScope]) -> bool:
+    scope_key = scope.history_key() if scope else 'all'
+    for entry in _get_review_history(request):
+        if entry.get('scope_key', 'all') == scope_key:
+            return True
+    return False
+
+
 def _set_review_history(request: HttpRequest, history: List[Dict[str, Any]]) -> None:
     request.session[REVIEW_HISTORY_SESSION_KEY] = history
     request.session.modified = True
@@ -71,55 +86,69 @@ def _push_review_history_entry(request: HttpRequest, entry: Dict[str, Any]) -> N
     _set_review_history(request, history)
 
 
-def _pop_review_history_entry(request: HttpRequest, deck: Optional[Deck] = None) -> Optional[Dict[str, Any]]:
+def _pop_review_history_entry(request: HttpRequest, scope: Optional[StudyScope] = None) -> Optional[Dict[str, Any]]:
     history = list(_get_review_history(request))
-    deck_key = deck.id if deck else None
+    scope_key = scope.history_key() if scope else 'all'
     if not history:
         return None
     while history:
         entry = history.pop()
-        if deck_key is None or entry.get('filter_deck_id') == deck_key:
+        entry_scope_key = entry.get('scope_key', 'all')
+        if entry_scope_key == scope_key:
             _set_review_history(request, history)
             return entry
     _set_review_history(request, history)
     return None
 
 
-def _ensure_history_scope(request: HttpRequest, deck: Optional[Deck]) -> None:
-    deck_key = deck.id if deck else None
-    last_key = request.session.get(REVIEW_HISTORY_DECK_KEY)
-    if last_key != deck_key:
+def _ensure_history_scope(request: HttpRequest, scope: Optional[StudyScope]) -> None:
+    scope_key = scope.history_key() if scope else 'all'
+    last_key = request.session.get(REVIEW_HISTORY_SCOPE_KEY)
+    if last_key != scope_key:
         _set_review_history(request, [])
-    request.session[REVIEW_HISTORY_DECK_KEY] = deck_key
+    request.session[REVIEW_HISTORY_SCOPE_KEY] = scope_key
     request.session.modified = True
 
 
-def _resolve_deck(request: HttpRequest):
+def _resolve_scope(request: HttpRequest):
     deck_id = request.POST.get('deck_id') or request.GET.get('deck_id')
-    if not deck_id:
-        return None
-    try:
-        return Deck.objects.get(id=deck_id, user=request.user)
-    except Deck.DoesNotExist as exc:  # pragma: no cover
-        raise Http404('Deck not found') from exc
+    study_set_id = request.POST.get('study_set_id') or request.GET.get('study_set_id')
+    deck = None
+    study_set = None
+    if study_set_id:
+        try:
+            study_set = StudySet.objects.select_related('deck').get(id=study_set_id, user=request.user)
+        except StudySet.DoesNotExist as exc:  # pragma: no cover
+            raise Http404('Study set not found') from exc
+    if deck_id:
+        try:
+            deck = Deck.objects.get(id=deck_id, user=request.user)
+        except Deck.DoesNotExist as exc:  # pragma: no cover
+            raise Http404('Deck not found') from exc
+    if study_set is not None:
+        scope = StudyScope.from_study_set(study_set)
+        return scope.deck_target, study_set, scope
+    if deck is not None:
+        scope = StudyScope.from_deck(deck)
+        return deck, None, scope
+    return None, None, None
 
 
 @login_required
 def review_today(request: HttpRequest) -> HttpResponse:
-    deck = None
-    deck_id = request.GET.get('deck_id')
-    if deck_id:
-        deck = get_object_or_404(Deck, id=deck_id, user=request.user)
-    _ensure_history_scope(request, deck)
+    deck, study_set, scope = _resolve_scope(request)
+    _ensure_history_scope(request, scope)
     decks = Deck.objects.for_user(request.user)
-    summary = get_today_summary(request.user, deck)
+    study_sets, study_set_summaries = fetch_study_sets_with_summaries(request.user)
+    summary = get_today_summary(request.user, scope=scope)
     current_year = timezone.now().year
     selected_year_raw = request.GET.get('year')
     try:
         selected_year = int(selected_year_raw) if selected_year_raw else current_year
     except (TypeError, ValueError):
         selected_year = current_year
-    deck_scope_ids = deck.descendant_ids() if deck else None
+    deck_scope_target = scope.deck_target if scope else None
+    deck_scope_ids = deck_scope_target.descendant_ids() if deck_scope_target else None
     review_years_qs = Review.objects.filter(user=request.user)
     due_years_qs = SchedulingState.objects.filter(card__user=request.user, due_at__isnull=False)
     if deck_scope_ids:
@@ -133,20 +162,25 @@ def review_today(request: HttpRequest) -> HttpResponse:
     context = {
         'decks': decks,
         'active_deck': deck,
+        'active_study_set': study_set,
+        'study_sets': study_sets,
+        'study_set_summaries': study_set_summaries,
         'summary': summary,
         'heatmap_years': year_options,
         'selected_year': selected_year,
         'user_selected_year': bool(selected_year_raw),
+        'active_scope': scope,
     }
     return render(request, 'core/review/today.html', context)
 
 
 @login_required
 def review_next(request: HttpRequest) -> HttpResponse:
-    deck = _resolve_deck(request)
-    card = get_next_card(request.user, deck)
-    summary = get_today_summary(request.user, deck)
-    can_undo = bool(_get_review_history(request))
+    deck, study_set, scope = _resolve_scope(request)
+    _ensure_history_scope(request, scope)
+    card = get_next_card(request.user, deck=deck, scope=scope)
+    summary = get_today_summary(request.user, deck=deck, scope=scope)
+    can_undo = _has_history_for_scope(request, scope)
     if not card:
         return render(
             request,
@@ -154,6 +188,8 @@ def review_next(request: HttpRequest) -> HttpResponse:
             {
                 'summary': summary,
                 'deck': deck,
+                'study_set': study_set,
+                'scope': scope,
                 'can_undo': can_undo,
             },
         )
@@ -166,6 +202,8 @@ def review_next(request: HttpRequest) -> HttpResponse:
             {
                 'card': card,
                 'deck': deck,
+                'study_set': study_set,
+                'scope': scope,
                 'summary': summary,
                 'rating_previews': rating_previews,
                 'can_undo': can_undo,
@@ -179,18 +217,21 @@ def review_reveal(request: HttpRequest) -> HttpResponse:
     if not card_id:
         raise Http404('card not provided')
     card = get_object_or_404(Card.objects.select_related('deck', 'scheduling_state'), id=card_id, user=request.user)
-    deck = _resolve_deck(request)
-    summary = get_today_summary(request.user, deck)
+    deck, study_set, scope = _resolve_scope(request)
+    _ensure_history_scope(request, scope)
+    summary = get_today_summary(request.user, deck=deck, scope=scope)
     ensure_state(card)
     now = timezone.now()
     rating_previews = build_rating_previews(card, now=now)
-    can_undo = bool(_get_review_history(request))
+    can_undo = _has_history_for_scope(request, scope)
     return render(
         request,
         'core/review/partials/back.html',
         {
             'card': card,
             'deck': deck,
+            'study_set': study_set,
+            'scope': scope,
             'summary': summary,
             'rating_previews': rating_previews,
             'can_undo': can_undo,
@@ -204,7 +245,8 @@ def review_grade(request: HttpRequest) -> HttpResponse:
     rating = request.POST.get('rating')
     if card_id is None or rating is None:
         raise Http404('Missing card or rating')
-    deck = _resolve_deck(request)
+    deck, study_set, scope = _resolve_scope(request)
+    _ensure_history_scope(request, scope)
     now = timezone.now()
     try:
         rating_value = int(rating)
@@ -219,21 +261,23 @@ def review_grade(request: HttpRequest) -> HttpResponse:
     state_snapshot = _serialize_state(state_before)
     tags_before = list(card.tags)
     _, review_record = grade_card_for_user(user=request.user, card_id=card_id, rating=rating_value, now=now)
+    scope_key = scope.history_key() if scope else 'all'
     _push_review_history_entry(
         request,
         {
             'card_id': str(card.id),
-            'filter_deck_id': deck.id if deck else None,
+            'scope_key': scope_key,
             'card_deck_id': card.deck_id,
             'state': state_snapshot,
             'tags': tags_before,
             'review_id': review_record.id,
             'rating': rating_value,
+            'study_set_id': study_set.id if study_set else None,
         },
     )
-    next_card = get_next_card(request.user, deck)
-    summary = get_today_summary(request.user, deck)
-    can_undo = bool(_get_review_history(request))
+    next_card = get_next_card(request.user, deck=deck, scope=scope)
+    summary = get_today_summary(request.user, deck=deck, scope=scope)
+    can_undo = _has_history_for_scope(request, scope)
     if not next_card:
         return render(
             request,
@@ -241,6 +285,8 @@ def review_grade(request: HttpRequest) -> HttpResponse:
             {
                 'summary': summary,
                 'deck': deck,
+                'study_set': study_set,
+                'scope': scope,
                 'can_undo': can_undo,
             },
         )
@@ -252,6 +298,8 @@ def review_grade(request: HttpRequest) -> HttpResponse:
         {
             'card': next_card,
             'deck': deck,
+            'study_set': study_set,
+            'scope': scope,
             'summary': summary,
             'rating_previews': rating_previews,
             'can_undo': can_undo,
@@ -261,8 +309,9 @@ def review_grade(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def review_undo(request: HttpRequest) -> HttpResponse:
-    deck = _resolve_deck(request)
-    entry = _pop_review_history_entry(request, deck)
+    deck, study_set, scope = _resolve_scope(request)
+    _ensure_history_scope(request, scope)
+    entry = _pop_review_history_entry(request, scope)
     if not entry:
         return review_next(request)
     card = get_object_or_404(
@@ -281,16 +330,18 @@ def review_undo(request: HttpRequest) -> HttpResponse:
     review_id = entry.get('review_id')
     if review_id:
         Review.objects.filter(id=review_id, user=request.user).delete()
-    summary = get_today_summary(request.user, deck)
+    summary = get_today_summary(request.user, deck=deck, scope=scope)
     now = timezone.now()
     rating_previews = build_rating_previews(card, now=now)
-    can_undo = bool(_get_review_history(request))
+    can_undo = _has_history_for_scope(request, scope)
     return render(
         request,
         'core/review/partials/front.html',
         {
             'card': card,
             'deck': deck,
+            'study_set': study_set,
+            'scope': scope,
             'summary': summary,
             'rating_previews': rating_previews,
             'can_undo': can_undo,
