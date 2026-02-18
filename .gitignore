@@ -8,9 +8,9 @@ __pycache__/
 # Django
 *.log
 db.sqlite3
-/staticfiles/
-/media/
-/imports_tmp/
+web/staticfiles/
+web/media/
+web/imports_tmp/
 
 # Environment variables
 .env
