@@ -1,8 +1,13 @@
 {% load card_rendering %}
-<div class="space-y-6">
+<div class="space-y-6" data-card-id="{{ card.id }}">
     <div class="rounded border bg-gray-50 p-6 text-left">
         <h2 class="text-sm uppercase tracking-wide text-gray-500">Front</h2>
         <div class="mt-3 text-lg text-gray-800 space-y-3 rendered-card" data-card-surface="front">{{ card.front_md|render_card }}</div>
+    </div>
+    <div id="self-answer-box" hx-preserve="true" class="rounded border bg-white p-4 shadow-sm space-y-2">
+        <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Your draft answer (not graded)</div>
+        <textarea id="self-answer" class="w-full rounded border px-3 py-2 text-sm text-gray-800" placeholder="Type your guess here to compare after reveal..."></textarea>
+        <p class="text-[11px] text-gray-500">This is for your reference only; grading still depends on the buttons below. Press <span class="font-semibold text-gray-600">Ctrl + Enter</span> to reveal while typing.</p>
     </div>
     <div class="flex flex-wrap items-center justify-between gap-3">
         <div class="flex w-full flex-wrap gap-2 sm:w-auto">
@@ -15,7 +20,16 @@
                 {% if study_set %}
                     <input type="hidden" name="study_set_id" value="{{ study_set.id }}">
                 {% endif %}
-                <button type="submit" data-action="reveal" class="w-full rounded bg-indigo-600 px-6 py-3 text-base font-semibold text-white hover:bg-indigo-700 sm:text-lg">Show Answer</button>
+                {% if scope and scope.tag_value %}
+                    <input type="hidden" name="tag" value="{{ scope.tag_value }}">
+                {% endif %}
+                {% if pull_ahead %}
+                    <input type="hidden" name="pull_ahead" value="1">
+                {% endif %}
+                <button type="submit" data-action="reveal" class="w-full rounded bg-indigo-600 px-6 py-3 text-base font-semibold text-white hover:bg-indigo-700 sm:text-lg">
+                    <span class="block">Show Answer</span>
+                    <span class="block text-[11px] text-indigo-200">Ctrl + Enter</span>
+                </button>
             </form>
             {% if can_undo %}
                 <form method="post" action="{% url 'review:undo' %}" hx-post="{% url 'review:undo' %}" hx-target="#review-panel" hx-swap="innerHTML" class="flex-1 sm:flex-none">
@@ -26,17 +40,161 @@
                     {% if study_set %}
                         <input type="hidden" name="study_set_id" value="{{ study_set.id }}">
                     {% endif %}
+                    {% if scope and scope.tag_value %}
+                        <input type="hidden" name="tag" value="{{ scope.tag_value }}">
+                    {% endif %}
+                    {% if pull_ahead %}
+                        <input type="hidden" name="pull_ahead" value="1">
+                    {% endif %}
                     <button type="submit" class="w-full rounded border border-slate-300 px-6 py-3 text-base font-semibold text-slate-700 hover:bg-slate-100 sm:text-lg">Undo Last</button>
+                    <p class="mt-1 text-[11px] text-slate-500 text-center">Tip: undo restores the last rating.</p>
                 </form>
             {% endif %}
         </div>
-        <div class="w-full rounded border bg-gray-100 px-4 py-2 text-sm text-gray-600 text-center sm:w-auto sm:text-left space-y-1">
+        <div class="w-full rounded border bg-gray-100 px-4 py-2 text-sm text-gray-600 text-center sm:w-auto sm:text-left space-y-1" data-remaining-counts data-remaining-new="{{ summary.new_count }}" data-remaining-review="{{ summary.review_count }}" data-remaining-due="{{ summary.due_count }}">
             New {{ summary.new_count }} | Review {{ summary.review_count }} | Due {{ summary.due_count }}
             {% if study_set %}
                 <div class="text-xs text-gray-500">Custom set: {{ study_set.name }}</div>
             {% elif deck %}
                 <div class="text-xs text-gray-500">Deck: {{ deck.full_path }}</div>
+            {% elif scope and scope.tag_value %}
+                <div class="text-xs text-gray-500">Tag: {{ scope.tag_value }}</div>
             {% endif %}
+            <details class="inline-block text-xs">
+                <summary class="cursor-pointer text-indigo-600">More</summary>
+                <div class="mt-1 flex flex-col gap-1 text-left">
+                    <form method="post" action="{% url 'review:defer' %}" hx-post="{% url 'review:defer' %}" hx-target="#review-panel" hx-swap="innerHTML">
+                        {% csrf_token %}
+                        <input type="hidden" name="card_id" value="{{ card.id }}">
+                        {% if deck %}<input type="hidden" name="deck_id" value="{{ deck.id }}">{% endif %}
+                        {% if study_set %}<input type="hidden" name="study_set_id" value="{{ study_set.id }}">{% endif %}
+                        {% if scope and scope.tag_value %}<input type="hidden" name="tag" value="{{ scope.tag_value }}">{% endif %}
+                        {% if pull_ahead %}<input type="hidden" name="pull_ahead" value="1">{% endif %}
+                        <input type="hidden" name="days" value="1">
+                        <button type="submit" class="text-left text-gray-700 hover:text-indigo-600">Don't show for 1 day</button>
+                    </form>
+                    <form method="post" action="{% url 'review:defer' %}" hx-post="{% url 'review:defer' %}" hx-target="#review-panel" hx-swap="innerHTML">
+                        {% csrf_token %}
+                        <input type="hidden" name="card_id" value="{{ card.id }}">
+                        {% if deck %}<input type="hidden" name="deck_id" value="{{ deck.id }}">{% endif %}
+                        {% if study_set %}<input type="hidden" name="study_set_id" value="{{ study_set.id }}">{% endif %}
+                        {% if scope and scope.tag_value %}<input type="hidden" name="tag" value="{{ scope.tag_value }}">{% endif %}
+                        {% if pull_ahead %}<input type="hidden" name="pull_ahead" value="1">{% endif %}
+                        <input type="hidden" name="days" value="7">
+                        <button type="submit" class="text-left text-gray-700 hover:text-indigo-600">Don't show for 1 week</button>
+                    </form>
+                    <form method="post" action="{% url 'review:defer' %}" hx-post="{% url 'review:defer' %}" hx-target="#review-panel" hx-swap="innerHTML">
+                        {% csrf_token %}
+                        <input type="hidden" name="card_id" value="{{ card.id }}">
+                        {% if deck %}<input type="hidden" name="deck_id" value="{{ deck.id }}">{% endif %}
+                        {% if study_set %}<input type="hidden" name="study_set_id" value="{{ study_set.id }}">{% endif %}
+                        {% if scope and scope.tag_value %}<input type="hidden" name="tag" value="{{ scope.tag_value }}">{% endif %}
+                        {% if pull_ahead %}<input type="hidden" name="pull_ahead" value="1">{% endif %}
+                        <input type="hidden" name="days" value="30">
+                        <button type="submit" class="text-left text-gray-700 hover:text-indigo-600">Don't show for 1 month</button>
+                    </form>
+                    <a href="{% url 'cards:edit' card.id %}" class="text-gray-700 hover:text-indigo-600">Edit card</a>
+                    <form method="post" action="{% url 'review:delete' %}" hx-post="{% url 'review:delete' %}" hx-target="#review-panel" hx-swap="innerHTML" onsubmit="return confirm('Delete this card?');">
+                        {% csrf_token %}
+                        <input type="hidden" name="card_id" value="{{ card.id }}">
+                        {% if deck %}<input type="hidden" name="deck_id" value="{{ deck.id }}">{% endif %}
+                        {% if study_set %}<input type="hidden" name="study_set_id" value="{{ study_set.id }}">{% endif %}
+                        {% if scope and scope.tag_value %}<input type="hidden" name="tag" value="{{ scope.tag_value }}">{% endif %}
+                        {% if pull_ahead %}<input type="hidden" name="pull_ahead" value="1">{% endif %}
+                        <button type="submit" class="text-left text-red-600 hover:text-red-700">Delete card</button>
+                    </form>
+                </div>
+            </details>
         </div>
     </div>
 </div>
+<script>
+(function() {
+    if (window.corvusReviewHotkeysAttached) {
+        document.dispatchEvent(new Event('corvus-review-init'));
+        return;
+    }
+    window.corvusReviewHotkeysAttached = true;
+    const isTyping = (el) => {
+        if (!el) return false;
+        const tag = (el.tagName || '').toLowerCase();
+        return tag === 'input' || tag === 'textarea' || el.isContentEditable;
+    };
+    const handler = (event) => {
+        const active = document.activeElement;
+        const typing = isTyping(active);
+        if (typing && (event.key === 'Enter' || event.code === 'Enter') && (event.ctrlKey || event.metaKey)) {
+            const revealButton = document.querySelector('[data-action="reveal"]');
+            if (revealButton) {
+                revealButton.click();
+                if (active && typeof active.blur === 'function') {
+                    active.blur();
+                }
+                event.preventDefault();
+            }
+            return;
+        }
+        if (typing) return;
+        if (event.ctrlKey || event.metaKey || event.altKey) return;
+        const panel = document.getElementById('review-panel');
+        if (!panel) return;
+        const click = (selector) => {
+            const target = panel.querySelector(selector);
+            if (target) {
+                target.click();
+                return true;
+            }
+            return false;
+        };
+        if (event.code === 'Space' || event.code === 'Enter') {
+            if (click('[data-action=\"reveal\"]') || click('[data-rating=\"2\"]')) {
+                event.preventDefault();
+            }
+            return;
+        }
+        if (event.key === '1' || event.key === '2' || event.key === '3' || event.key === '4') {
+            const rating = parseInt(event.key, 10) - 1;
+            if (click(`[data-rating=\"${rating}\"]`)) {
+                event.preventDefault();
+            }
+        }
+    };
+    document.addEventListener('keydown', handler);
+    const attachDraftHelpers = () => {
+        const panel = document.getElementById('review-panel');
+        const textarea = document.getElementById('self-answer');
+        if (panel) {
+            const currentCard = panel.querySelector('[data-card-id]');
+            const currentId = currentCard ? currentCard.dataset.cardId : null;
+            if (panel.dataset.lastCardId && currentId && panel.dataset.lastCardId !== currentId) {
+                if (textarea) {
+                    textarea.value = '';
+                }
+            }
+            if (currentId) {
+                panel.dataset.lastCardId = currentId;
+            }
+        }
+        if (textarea && !textarea.dataset.hotkeyAttached) {
+            textarea.dataset.hotkeyAttached = '1';
+            textarea.addEventListener('keydown', (event) => {
+                if ((event.ctrlKey || event.metaKey) && (event.key === 'Enter' || event.code === 'Enter')) {
+                    const revealButton = document.querySelector('[data-action=\"reveal\"]');
+                    if (revealButton) {
+                        event.preventDefault();
+                        revealButton.click();
+                        textarea.blur();
+                    }
+                }
+            });
+        }
+    };
+    document.addEventListener('htmx:afterSwap', (event) => {
+        if (event.target && event.target.id === 'review-panel') {
+            attachDraftHelpers();
+        }
+    });
+    document.addEventListener('corvus-review-init', attachDraftHelpers);
+    attachDraftHelpers();
+})();
+</script>

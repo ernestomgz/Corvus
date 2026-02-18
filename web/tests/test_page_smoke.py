@@ -20,7 +20,10 @@ def test_authenticated_pages(client, user_factory, deck_factory, card_factory):
         reverse('decks:list'),
         reverse('cards:list'),
         reverse('review:today'),
+        reverse('review:dashboard'),
+        reverse('review:study'),
         reverse('imports:dashboard'),
+        reverse('settings:detail'),
     ]
     for url in protected_urls:
         response = client.get(url)

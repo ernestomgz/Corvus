@@ -50,7 +50,23 @@ def upload_markdown(request: HttpRequest) -> HttpResponse:
         except MarkdownImportError as exc:
             messages.error(request, f"Import failed: {exc}")
             return redirect('imports:dashboard')
-        return redirect('imports:markdown-preview', session_id=session.id)
+        payload = session.payload or {}
+        summary = payload.get('summary') or {}
+        has_errors = summary.get('has_errors')
+        forced_preview = request.POST.get('mode') == 'preview'
+        if has_errors or forced_preview:
+            return redirect('imports:markdown-preview', session_id=session.id)
+        try:
+            import_record = apply_markdown_session(session)
+        except MarkdownImportError as exc:
+            messages.error(request, f'Unable to apply import: {exc}')
+            return redirect('imports:markdown-preview', session_id=session.id)
+        summary = import_record.summary
+        messages.success(
+            request,
+            f"Markdown import applied. Created {summary['created']}, updated {summary['updated']}, skipped {summary['skipped']}.",
+        )
+        return redirect('imports:dashboard')
     anki_form = AnkiImportForm(user=request.user)
     recent_imports = Import.objects.filter(user=request.user).order_by('-created_at')[:10]
     pending_sessions = ImportSession.objects.filter(
@@ -120,7 +136,7 @@ def preview_markdown(request: HttpRequest, session_id: str) -> HttpResponse:
         return redirect('imports:dashboard')
 
     new_cards = [card for card in cards if not card.get('existing')]
-    update_cards = [card for card in cards if card.get('existing')]
+    update_cards = [card for card in cards if card.get('existing') and card.get('has_changes')]
     return render(
         request,
         'imports/preview.html',

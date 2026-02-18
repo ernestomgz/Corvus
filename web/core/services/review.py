@@ -77,6 +77,8 @@ class StudyScope:
         deck = self.deck_target
         if deck:
             return f"deck:{deck.id}"
+        if self.tag_value:
+            return f"tag:{self.tag_value}"
         return 'all'
 
 
@@ -120,6 +122,7 @@ def get_next_card(
     config: Optional[SchedulerConfig] = None,
     now=None,
     scope: Optional[StudyScope] = None,
+    allow_ahead: bool = False,
 ) -> Optional[Card]:
     now = now or timezone.now()
     config = config or get_scheduler_config()
@@ -142,6 +145,11 @@ def get_next_card(
     first_state = limited.first()
     if first_state:
         return first_state.card
+
+    if allow_ahead:
+        upcoming = states.filter(due_at__isnull=False).order_by('due_at', 'card__created_at').first()
+        if upcoming:
+            return upcoming.card
     return None
 
 

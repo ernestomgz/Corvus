@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import html
 from functools import lru_cache
 
 import bleach
@@ -11,6 +12,12 @@ from mdit_py_plugins.dollarmath import dollarmath_plugin
 _MATH_BLOCK_PATTERN = re.compile(r"\[\$\$](?P<body>.+?)\[/\$\$]", re.DOTALL)
 _HTML_SNIFFER = re.compile(r"<\s*([a-zA-Z!/?])")
 MATH_SIGNAL_PATTERN = re.compile(r'(\\[a-zA-Z]+|\$\$|\$|\\\[|\\\]|\^|\\\(|\\\)|\\\{|\\\}|\\\/|\[latex|\[/latex])')
+_WIKI_LINK_RE = re.compile(
+    r'\[\[(?P<target>[^\]#|]+)'
+    r'(?:#(?P<section>[^\]|]+))?'
+    r'(?:\|(?P<label>[^\]]+))?'
+    r'\]\]'
+)
 
 _ALLOWED_TAGS = sorted(
     {
@@ -18,6 +25,8 @@ _ALLOWED_TAGS = sorted(
         'p', 'pre', 'code', 'span', 'div', 'img', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
         'ul', 'ol', 'li', 'blockquote', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
         'em', 'strong', 'a', 'br', 'sup', 'sub', 'figure', 'figcaption', 'audio', 'source',
+        'script', 'svg', 'path', 'g', 'line', 'rect', 'circle', 'ellipse', 'polyline', 'polygon',
+        'text', 'tspan', 'defs', 'marker', 'use', 'clipPath', 'symbol', 'title', 'desc', 'style',
     }
 )
 
@@ -31,6 +40,22 @@ _ALLOWED_ATTRIBUTES = {
     'pre': ['class'],
     'audio': ['src', 'controls'],
     'source': ['src', 'type'],
+    'script': ['type'],
+    'svg': ['class', 'style', 'width', 'height', 'viewBox', 'xmlns', 'fill', 'stroke', 'stroke-width'],
+    'g': ['class', 'style', 'fill', 'stroke', 'stroke-width', 'transform'],
+    'path': ['class', 'style', 'd', 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'marker-start', 'marker-end'],
+    'line': ['class', 'style', 'x1', 'y1', 'x2', 'y2', 'stroke', 'stroke-width'],
+    'rect': ['class', 'style', 'x', 'y', 'width', 'height', 'rx', 'ry', 'fill', 'stroke', 'stroke-width'],
+    'circle': ['class', 'style', 'cx', 'cy', 'r', 'fill', 'stroke', 'stroke-width'],
+    'ellipse': ['class', 'style', 'cx', 'cy', 'rx', 'ry', 'fill', 'stroke', 'stroke-width'],
+    'polyline': ['class', 'style', 'points', 'fill', 'stroke', 'stroke-width'],
+    'polygon': ['class', 'style', 'points', 'fill', 'stroke', 'stroke-width'],
+    'text': ['class', 'style', 'x', 'y', 'fill', 'stroke', 'stroke-width', 'font-size', 'text-anchor'],
+    'tspan': ['class', 'style', 'x', 'y', 'dx', 'dy'],
+    'marker': ['id', 'orient', 'markerWidth', 'markerHeight', 'refX', 'refY', 'viewBox'],
+    'use': ['href', 'x', 'y', 'width', 'height', 'transform'],
+    'clipPath': ['id'],
+    'style': ['type'],
 }
 
 _ALLOWED_PROTOCOLS = ['http', 'https', 'data']
@@ -58,6 +83,11 @@ _BLOCK_PLACEHOLDER_PARA_RE = re.compile(
     re.IGNORECASE,
 )
 _MATH_CLASS_RE = re.compile(r'class=["\'][^"\']*\bmath\b', re.IGNORECASE)
+_SCRIPT_TAG_RE = re.compile(r'<script(?P<attrs>[^>]*)>(?P<body>.*?)</script>', re.IGNORECASE | re.DOTALL)
+_TIKZ_CODE_RE = re.compile(
+    r'<pre><code class="(?P<class>[^"]*\blanguage-(?P<lang>tikz|latex)[^"]*)">(?P<body>.*?)</code></pre>',
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 class _MathSegment(tuple):
@@ -132,6 +162,20 @@ def _normalise_legacy_math(text: str) -> str:
     return value
 
 
+def _normalise_wiki_links(text: str) -> str:
+    def repl(match: re.Match[str]) -> str:
+        target = (match.group('target') or '').strip()
+        section = (match.group('section') or '').strip()
+        label = (match.group('label') or '').strip()
+        # Ignore numeric size hints (e.g., [[graph.jpg|200]]) and prefer the target name.
+        if label and label.isdigit():
+            label = ''
+        display = label or section or target
+        return display
+
+    return _WIKI_LINK_RE.sub(repl, text)
+
+
 def _looks_like_html(value: str) -> bool:
     return bool(_HTML_SNIFFER.search(value))
 
@@ -146,6 +190,29 @@ def _normalise_classes(existing: list[str], required: list[str]) -> list[str]:
             merged.append(item)
             seen.add(item)
     return merged
+
+
+def _strip_unsafe_scripts(html_value: str) -> str:
+    def repl(match: re.Match[str]) -> str:
+        attrs = (match.group('attrs') or '').lower()
+        if 'text/tikz' in attrs:
+            return match.group(0)
+        return ''
+
+    return _SCRIPT_TAG_RE.sub(repl, html_value)
+
+
+def _promote_tikz_blocks(html_value: str) -> str:
+    def repl(match: re.Match[str]) -> str:
+        lang = (match.group('lang') or '').lower()
+        raw_body = match.group('body') or ''
+        body_text = html.unescape(raw_body)
+        if '\\begin{tikzpicture' not in body_text and '\\begin{circuitikz' not in body_text:
+            if lang != 'tikz':
+                return match.group(0)
+        return f'<script type="text/tikz">\n{body_text}\n</script>'
+
+    return _TIKZ_CODE_RE.sub(repl, html_value)
 
 
 def _has_delimiters(text: str, candidates: tuple[tuple[str, str], ...]) -> bool:
@@ -260,6 +327,7 @@ def _restore_placeholders(html: str, segments: list[_MathSegment]) -> str:
 @lru_cache(maxsize=256)
 def _render_markdown_cached(raw: str) -> str:
     prepared = _normalise_legacy_math(raw)
+    prepared = _normalise_wiki_links(prepared)
     placeholder_text, segments = _extract_math_segments(prepared)
     rendered = _markdown.render(placeholder_text)
     if segments:
@@ -289,11 +357,18 @@ def render_to_html(content: str | None) -> str:
     if not content:
         return ''
     if _looks_like_html(content):
-        html = _wrap_raw_math(content)
+        html_value = _wrap_raw_math(content)
     else:
-        html = _render_markdown_cached(content)
-    html = re.sub(r'<script.*?>.*?</script>', '', html, flags=re.IGNORECASE | re.DOTALL)
-    cleaned = bleach.clean(html, tags=_ALLOWED_TAGS, attributes=_ALLOWED_ATTRIBUTES, protocols=_ALLOWED_PROTOCOLS, strip=True)
+        html_value = _render_markdown_cached(content)
+    html_value = _promote_tikz_blocks(html_value)
+    html_value = _strip_unsafe_scripts(html_value)
+    cleaned = bleach.clean(
+        html_value,
+        tags=_ALLOWED_TAGS,
+        attributes=_ALLOWED_ATTRIBUTES,
+        protocols=_ALLOWED_PROTOCOLS,
+        strip=True,
+    )
     if _contains_math_markup(content):
         cleaned = _wrap_raw_math(cleaned)
         if 'math' not in cleaned and not _has_known_delimiters(cleaned):

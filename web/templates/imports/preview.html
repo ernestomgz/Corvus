@@ -12,7 +12,9 @@
         <div class="flex items-center justify-between">
             <div>
                 <h2 class="text-lg font-semibold text-gray-700">Progress</h2>
-                <p class="text-sm text-gray-500">{{ progress }}% parsed - {{ summary.creates|default:0 }} new - {{ summary.updates|default:0 }} updates</p>
+                <p class="text-sm text-gray-500">
+                    {{ progress }}% parsed · {{ summary.creates|default:0 }} new · {{ summary.updates|default:0 }} updates · {{ summary.unchanged|default:0 }} unchanged
+                </p>
             </div>
             <div class="min-w-[160px]">
                 <div class="h-3 rounded-full bg-gray-200">
@@ -25,6 +27,11 @@
     {% if has_errors %}
         <div class="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             Some notes contain validation errors (missing folders or attachments). Fix the archive and re-upload before applying.
+        </div>
+    {% endif %}
+    {% if summary.unchanged %}
+        <div class="rounded border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+            {{ summary.unchanged }} existing card{{ summary.unchanged|pluralize }} are unchanged and will be skipped automatically.
         </div>
     {% endif %}
 
@@ -129,6 +136,47 @@
                                     </div>
                                 </div>
                             </div>
+                            {% if card.diff %}
+                                <div class="border-t border-gray-200 px-4 py-3 bg-slate-50">
+                                    <div class="text-xs uppercase tracking-wide text-gray-500 mb-2">Changes</div>
+                                    <div class="grid gap-3 md:grid-cols-2">
+                                        <div class="rounded border bg-white shadow-inner">
+                                            <div class="border-b bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600">Front diff</div>
+                                            <div class="max-h-64 overflow-auto p-3">
+                                                <table class="w-full text-[11px] font-mono text-slate-700">
+                                                    <tbody>
+                                                    {% for row in card.diff.front %}
+                                                        <tr class="{% if row.op == '+' %}bg-green-50{% elif row.op == '-' %}bg-red-50{% endif %}">
+                                                            <td class="w-10 pr-2 text-right align-top text-slate-400">{{ row.before }}</td>
+                                                            <td class="w-10 pr-2 text-right align-top text-slate-400">{{ row.after }}</td>
+                                                            <td class="w-3 pr-2 align-top text-slate-500">{{ row.op }}</td>
+                                                            <td class="align-top whitespace-pre-wrap">{{ row.html|safe }}</td>
+                                                        </tr>
+                                                    {% endfor %}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                        <div class="rounded border bg-white shadow-inner">
+                                            <div class="border-b bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600">Back diff</div>
+                                            <div class="max-h-64 overflow-auto p-3">
+                                                <table class="w-full text-[11px] font-mono text-slate-700">
+                                                    <tbody>
+                                                    {% for row in card.diff.back %}
+                                                        <tr class="{% if row.op == '+' %}bg-green-50{% elif row.op == '-' %}bg-red-50{% endif %}">
+                                                            <td class="w-10 pr-2 text-right align-top text-slate-400">{{ row.before }}</td>
+                                                            <td class="w-10 pr-2 text-right align-top text-slate-400">{{ row.after }}</td>
+                                                            <td class="w-3 pr-2 align-top text-slate-500">{{ row.op }}</td>
+                                                            <td class="align-top whitespace-pre-wrap">{{ row.html|safe }}</td>
+                                                        </tr>
+                                                    {% endfor %}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            {% endif %}
                         </section>
                     {% endfor %}
                 </div>

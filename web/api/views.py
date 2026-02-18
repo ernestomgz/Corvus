@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict
 
+from collections import defaultdict
+
 from datetime import datetime, time, timedelta
 
 from django.contrib.auth import authenticate, login, logout
@@ -14,10 +16,11 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from accounts.models import User
-from core.models import Card, Deck, Import, Review, SchedulingState
+from core.models import Card, Deck, Import, KnowledgeMap, KnowledgeNode, Review, SchedulingState
 from core.scheduling import ensure_state
 from core.services.review import get_next_card, get_today_summary, grade_card_for_user
 from core.services.card_types import resolve_card_type
+from core.services.knowledge_maps import KnowledgeMapImportError, import_knowledge_map_from_payload
 from import_anki.services import AnkiImportError, process_apkg_archive
 from import_md.services import MarkdownImportError, process_markdown_archive
 
@@ -40,6 +43,21 @@ def _require_user(request: HttpRequest) -> User:
     if user is None or not user.is_authenticated:
         raise PermissionError('authentication required')
     return user  # type: ignore[return-value]
+
+
+def _parse_deck_id(raw_deck_id: Any) -> int:
+    try:
+        return int(raw_deck_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError('deck_id must be an integer') from exc
+
+
+def _get_deck_for_user(raw_deck_id: Any, user: User) -> Deck:
+    deck_id = _parse_deck_id(raw_deck_id)
+    try:
+        return Deck.objects.get(id=deck_id, user=user)
+    except Deck.DoesNotExist as exc:
+        raise LookupError('deck not found') from exc
 
 
 def _deck_to_dict(deck: Deck) -> dict:
@@ -82,6 +100,55 @@ def _card_to_dict(card: Card) -> dict:
             'last_rating': state.last_rating,
         },
     }
+
+
+def _knowledge_map_to_dict(knowledge_map: KnowledgeMap, include_nodes: bool = False) -> dict:
+    payload = {
+        'slug': knowledge_map.slug,
+        'name': knowledge_map.name,
+        'description': knowledge_map.description,
+        'metadata': knowledge_map.metadata,
+        'tag_prefix': f'km:{knowledge_map.slug}:',
+        'node_count': knowledge_map.nodes.count(),
+        'created_at': knowledge_map.created_at.isoformat(),
+        'updated_at': knowledge_map.updated_at.isoformat(),
+    }
+    if include_nodes:
+        payload['nodes'] = _knowledge_nodes_as_tree(knowledge_map)
+    return payload
+
+
+def _knowledge_nodes_as_tree(knowledge_map: KnowledgeMap) -> list[dict]:
+    nodes = list(
+        knowledge_map.nodes.select_related('parent').order_by('parent_id', 'display_order', 'id')
+    )
+    children: dict[int | None, list[KnowledgeNode]] = defaultdict(list)
+    for node in nodes:
+        children[node.parent_id].append(node)
+    return [_knowledge_node_to_dict(node, children) for node in children.get(None, [])]
+
+
+def _knowledge_node_to_dict(
+    node: KnowledgeNode, children: dict[int | None, list[KnowledgeNode]]
+) -> dict:
+    payload = {
+        'key': node.identifier,
+        'title': node.title,
+        'definition': node.definition,
+        'guidance': node.guidance,
+        'sources': node.sources,
+        'metadata': node.metadata,
+        'tag': node.tag_value,
+    }
+    child_nodes = children.get(node.id, [])
+    if child_nodes:
+        payload['children'] = [
+            _knowledge_node_to_dict(child, children)
+            for child in sorted(child_nodes, key=lambda c: (c.display_order, c.id))
+        ]
+    else:
+        payload['children'] = []
+    return payload
 
 
 @csrf_exempt
@@ -191,11 +258,15 @@ def cards_collection(request: HttpRequest) -> JsonResponse:
         return _json_error(str(exc), status=401)
 
     if request.method == 'GET':
-        deck_id = request.GET.get('deck_id')
+        deck_id_raw = request.GET.get('deck_id')
         search = request.GET.get('q')
         tag = request.GET.get('tag')
         cards = Card.objects.for_user(user).select_related('deck', 'scheduling_state')
-        if deck_id:
+        if deck_id_raw:
+            try:
+                deck_id = _parse_deck_id(deck_id_raw)
+            except ValueError as exc:
+                return _json_error(str(exc))
             cards = cards.filter(deck_id=deck_id)
         if tag:
             cards = cards.filter(tags__contains=[tag.strip()])
@@ -208,12 +279,14 @@ def cards_collection(request: HttpRequest) -> JsonResponse:
         payload = _parse_json(request)
     except ValueError as exc:
         return _json_error(str(exc))
-    deck_id = payload.get('deck_id')
-    if not deck_id:
+    deck_id_raw = payload.get('deck_id')
+    if not deck_id_raw:
         return _json_error('deck_id required')
     try:
-        deck = Deck.objects.get(id=deck_id, user=user)
-    except Deck.DoesNotExist:
+        deck = _get_deck_for_user(deck_id_raw, user)
+    except ValueError as exc:
+        return _json_error(str(exc))
+    except LookupError:
         return _json_error('deck not found', status=404)
     card_type_token = payload.get('card_type', 'basic')
     try:
@@ -284,17 +357,88 @@ def card_detail(request: HttpRequest, card_id: str) -> JsonResponse:
 
 @csrf_exempt
 @require_http_methods(['GET'])
+def knowledge_maps_collection(request: HttpRequest) -> JsonResponse:
+    try:
+        user = _require_user(request)
+    except PermissionError as exc:
+        return _json_error(str(exc), status=401)
+    maps = (
+        KnowledgeMap.objects.for_user(user)
+        .annotate(total_nodes=Count('nodes'))
+        .order_by('name')
+    )
+    payload = [
+        {
+            'slug': km.slug,
+            'name': km.name,
+            'description': km.description,
+            'metadata': km.metadata,
+            'tag_prefix': f'km:{km.slug}:',
+            'node_count': km.total_nodes,
+            'created_at': km.created_at.isoformat(),
+            'updated_at': km.updated_at.isoformat(),
+        }
+        for km in maps
+    ]
+    return JsonResponse(payload, safe=False)
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
+def knowledge_map_detail(request: HttpRequest, map_slug: str) -> JsonResponse:
+    try:
+        user = _require_user(request)
+    except PermissionError as exc:
+        return _json_error(str(exc), status=401)
+    try:
+        knowledge_map = KnowledgeMap.objects.get(user=user, slug=map_slug)
+    except KnowledgeMap.DoesNotExist:
+        return _json_error('knowledge map not found', status=404)
+    return JsonResponse(_knowledge_map_to_dict(knowledge_map, include_nodes=True))
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def knowledge_map_import(request: HttpRequest) -> JsonResponse:
+    try:
+        user = _require_user(request)
+    except PermissionError as exc:
+        return _json_error(str(exc), status=401)
+    try:
+        payload = _parse_json(request)
+    except ValueError as exc:
+        return _json_error(str(exc))
+    try:
+        result = import_knowledge_map_from_payload(user=user, payload=payload)
+    except KnowledgeMapImportError as exc:
+        return _json_error(str(exc))
+    response = {
+        'slug': result.knowledge_map.slug,
+        'name': result.knowledge_map.name,
+        'node_count': result.knowledge_map.nodes.count(),
+        'created_nodes': result.created_nodes,
+        'replaced_nodes': result.replaced_nodes,
+        'created_map': result.created_map,
+    }
+    status_code = 201 if result.created_map else 200
+    return JsonResponse(response, status=status_code)
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
 def review_today(request: HttpRequest) -> JsonResponse:
     try:
         user = _require_user(request)
     except PermissionError as exc:
         return _json_error(str(exc), status=401)
     deck = None
-    deck_id = request.GET.get('deck_id')
-    if deck_id:
+    deck_id_raw = request.GET.get('deck_id')
+    if deck_id_raw:
         try:
-            deck = Deck.objects.get(id=deck_id, user=user)
-        except Deck.DoesNotExist:
+            deck = _get_deck_for_user(deck_id_raw, user)
+        except ValueError as exc:
+            return _json_error(str(exc), status=400)
+        except LookupError:
             return _json_error('deck not found', status=404)
     summary = get_today_summary(user, deck)
     return JsonResponse({
@@ -316,11 +460,13 @@ def review_next(request: HttpRequest) -> JsonResponse:
     except ValueError as exc:
         return _json_error(str(exc))
     deck = None
-    deck_id = payload.get('deck_id')
-    if deck_id:
+    deck_id_raw = payload.get('deck_id')
+    if deck_id_raw:
         try:
-            deck = Deck.objects.get(id=deck_id, user=user)
-        except Deck.DoesNotExist:
+            deck = _get_deck_for_user(deck_id_raw, user)
+        except ValueError as exc:
+            return _json_error(str(exc), status=400)
+        except LookupError:
             return _json_error('deck not found', status=404)
     card = get_next_card(user, deck)
     if not card:
@@ -376,8 +522,10 @@ def review_grade(request: HttpRequest) -> JsonResponse:
     deck = None
     if deck_id:
         try:
-            deck = Deck.objects.get(id=deck_id, user=user)
-        except Deck.DoesNotExist:
+            deck = _get_deck_for_user(deck_id, user)
+        except ValueError as exc:
+            return _json_error(str(exc), status=400)
+        except LookupError:
             return _json_error('deck not found', status=404)
     if not Card.objects.filter(id=card_id, user=user).exists():
         return _json_error('card not found', status=404)
@@ -533,13 +681,15 @@ def import_markdown(request: HttpRequest) -> JsonResponse:
         user = _require_user(request)
     except PermissionError as exc:
         return _json_error(str(exc), status=401)
-    deck_id = request.POST.get('deck_id')
+    deck_id_raw = request.POST.get('deck_id')
     archive = request.FILES.get('archive')
-    if not deck_id or archive is None:
+    if not deck_id_raw or archive is None:
         return _json_error('deck_id and archive required')
     try:
-        deck = Deck.objects.get(id=deck_id, user=user)
-    except Deck.DoesNotExist:
+        deck = _get_deck_for_user(deck_id_raw, user)
+    except ValueError as exc:
+        return _json_error(str(exc))
+    except LookupError:
         return _json_error('deck not found', status=404)
     try:
         import_record = process_markdown_archive(user=user, deck=deck, uploaded_file=archive)
@@ -555,13 +705,15 @@ def import_anki(request: HttpRequest) -> JsonResponse:
         user = _require_user(request)
     except PermissionError as exc:
         return _json_error(str(exc), status=401)
-    deck_id = request.POST.get('deck_id')
+    deck_id_raw = request.POST.get('deck_id')
     package = request.FILES.get('package')
-    if not deck_id or package is None:
+    if not deck_id_raw or package is None:
         return _json_error('deck_id and package required')
     try:
-        deck = Deck.objects.get(id=deck_id, user=user)
-    except Deck.DoesNotExist:
+        deck = _get_deck_for_user(deck_id_raw, user)
+    except ValueError as exc:
+        return _json_error(str(exc))
+    except LookupError:
         return _json_error('deck not found', status=404)
     try:
         import_record = process_apkg_archive(user=user, deck=deck, uploaded_file=package)

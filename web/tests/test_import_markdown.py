@@ -86,6 +86,21 @@ def test_md_media_copy_and_rewrite(user_factory, deck_factory, settings):
     assert '![' in card.back_md and settings.MEDIA_URL in card.back_md
 
 
+def test_md_obsidian_resized_media_is_found(user_factory, deck_factory, settings):
+    user = user_factory()
+    deck = deck_factory(user=user)
+    image_bytes = b'fake-image'
+    markdown = '#card Photo\n\n![[photo.png|200]]'
+    archive = _build_zip({'note.md': markdown}, media={'photo.png': image_bytes})
+    record = process_markdown_archive(user=user, deck=deck, uploaded_file=archive)
+    card = Card.objects.get(user=user)
+    assert record.summary['created'] == 1
+    assert card.media
+    assert card.media[0]['url'].startswith(settings.MEDIA_URL)
+    assert 'photo' in card.media[0]['name']
+    assert 'photo.png|200' not in card.back_md
+
+
 def test_md_import_skips_root_folder(user_factory, deck_factory):
     user = user_factory()
     deck = deck_factory(user=user, name='Biology')
