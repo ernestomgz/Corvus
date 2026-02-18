@@ -23,6 +23,10 @@
                         <p class="text-sm text-red-600">{{ markdown_form.archive.errors.0 }}</p>
                     {% endif %}
                 </div>
+                <label class="mb-4 flex cursor-pointer items-center gap-2 text-sm text-gray-600">
+                    <input type="checkbox" name="mode" value="preview" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                    <span>Review cards in a preview before applying</span>
+                </label>
                 <button type="submit" class="rounded bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700">Upload</button>
             </form>
         </section>

@@ -2,6 +2,33 @@
 <ul class="space-y-3" id="deck-tree-root">
     {% include 'core/decks/partials/deck_nodes.html' with nodes=deck_tree %}
 </ul>
+<script>
+(function() {
+    if (window.corvusDeckCollapseAttached) return;
+    window.corvusDeckCollapseAttached = true;
+    const toggle = (button) => {
+        const targetId = button.getAttribute('data-target');
+        if (!targetId) return;
+        const target = document.getElementById(targetId);
+        if (!target) return;
+        const expanded = button.getAttribute('aria-expanded') === 'true';
+        if (expanded) {
+            target.classList.add('hidden');
+            button.setAttribute('aria-expanded', 'false');
+            button.textContent = '▸';
+        } else {
+            target.classList.remove('hidden');
+            button.setAttribute('aria-expanded', 'true');
+            button.textContent = '▾';
+        }
+    };
+    document.addEventListener('click', (event) => {
+        const btn = event.target.closest('[data-collapse-toggle]');
+        if (!btn) return;
+        toggle(btn);
+    });
+})();
+</script>
 {% else %}
 <ul>
     <li class="rounded border border-dashed p-6 text-center text-gray-500">No decks yet. Use “Create deck” above to add one.</li>

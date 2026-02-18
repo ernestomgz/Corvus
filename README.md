@@ -46,6 +46,7 @@ The suite covers SM-2 scheduling transitions, importer behaviours, permission bo
 - Anki `.apkg` importer (SQLite parsing, media remapping, scheduling field mapping on new cards, idempotent re-imports).
 - Public REST API (`/api/v1`) for auth, decks, cards, review flow, and imports.
 - Tailwind CSS build baked into the Docker image; HTMX included via CDN.
+- Knowledge maps: upload taxonomy JSON to `/api/knowledge-maps/import`, then tag cards with the generated `km:<map>:<node>` strings (see `docs/KNOWLEDGE_MAPS.md`).
 
 ## Useful Commands
 - `docker compose exec web python manage.py createsuperuser`
@@ -61,3 +62,7 @@ The suite covers SM-2 scheduling transitions, importer behaviours, permission bo
 - `web/tests/` – pytest suite with factory_boy fixtures.
 
 Enjoy building with Corvus! Contributions for later phases (export, richer analytics, etc.) can plug into the existing app structure.
+
+## Knowledge Maps
+
+Custom knowledge frameworks can be imported via JSON and managed through the API. Read `docs/KNOWLEDGE_MAPS.md` for the schema, tag format, and workflow, and explore `samples/knowledge_map.json` for a ready-to-import example. Tag cards with the generated `km:<map-slug>:<node-key>` strings to anchor them inside your map.

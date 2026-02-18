@@ -20,17 +20,20 @@
         };
     </script>
     <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" defer></script>
+    <script src="https://tikzjax.com/v1/tikzjax.js" defer></script>
 </head>
 <body class="bg-gray-50 text-gray-900 min-h-screen flex flex-col">
     <header class="bg-white shadow p-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-        <div class="text-xl font-bold">Corvus SRS</div>
-        <nav class="flex flex-wrap gap-3 text-sm">
+        <a href="{% url 'review:dashboard' %}" class="text-xl font-bold text-gray-900 hover:text-gray-700">Corvus SRS</a>
+        <nav class="flex flex-wrap gap-3 text-sm overflow-x-auto whitespace-nowrap">
             {% if user.is_authenticated %}
                 <a href="{% url 'decks:list' %}" class="text-gray-600 hover:text-gray-900">Decks</a>
-                <a href="{% url 'review:today' %}" class="text-gray-600 hover:text-gray-900">Today</a>
+                <a href="{% url 'review:study' %}" class="text-gray-600 hover:text-gray-900">Study Now</a>
                 <a href="{% url 'cards:list' %}" class="text-gray-600 hover:text-gray-900">Cards</a>
                 <a href="{% url 'card_types:list' %}" class="text-gray-600 hover:text-gray-900">Card Types</a>
                 <a href="{% url 'imports:dashboard' %}" class="text-gray-600 hover:text-gray-900">Import</a>
+                <a href="{% url 'knowledge_maps:list' %}" class="text-gray-600 hover:text-gray-900">Knowledge Maps</a>
+                <a href="{% url 'settings:detail' %}" class="text-gray-600 hover:text-gray-900">Settings</a>
                 <a href="{% url 'accounts:logout' %}" class="text-gray-600 hover:text-gray-900">Logout</a>
             {% else %}
                 <a href="{% url 'accounts:login' %}" class="text-gray-600 hover:text-gray-900">Login</a>
@@ -54,13 +57,24 @@
         Corvus SRS - Phase 1 MVP
     </footer>
     <script>
-        const triggerMathJax = () => {
-            if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
-                window.MathJax.typesetPromise();
-            }
-        };
-        document.addEventListener('DOMContentLoaded', triggerMathJax);
-        document.addEventListener('htmx:afterSwap', triggerMathJax);
+        if (!window.triggerMathJax) {
+            window.triggerMathJax = () => {
+                if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
+                    window.MathJax.typesetPromise();
+                }
+            };
+            document.addEventListener('DOMContentLoaded', window.triggerMathJax);
+            document.addEventListener('htmx:afterSwap', window.triggerMathJax);
+        }
+        if (!window.triggerTikzJax) {
+            window.triggerTikzJax = () => {
+                if (window.tikzjax && typeof window.tikzjax.process === 'function') {
+                    window.tikzjax.process(document.body);
+                }
+            };
+            document.addEventListener('DOMContentLoaded', window.triggerTikzJax);
+            document.addEventListener('htmx:afterSwap', window.triggerTikzJax);
+        }
     </script>
 </body>
 </html>

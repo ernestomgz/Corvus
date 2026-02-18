@@ -1,7 +1,18 @@
 <div class="space-y-6 text-center">
-    <div class="rounded border border-dashed bg-gray-50 p-8 text-gray-500">
-        <p class="text-lg font-semibold">All caught up!</p>
-        <p class="mt-2 text-sm">No cards due right now. Check back later or add new cards.</p>
+    <div class="rounded border border-dashed bg-gray-50 p-8 text-gray-700 space-y-2">
+        <p class="text-lg font-semibold">Congratulations, there are no more cards to study.</p>
+        <p class="text-sm text-gray-500">You're fully caught up for this scope.</p>
+        <div class="flex flex-col items-center gap-2">
+            <button
+                hx-get="{% url 'review:next' %}{% if deck %}?deck_id={{ deck.id }}{% elif study_set %}?study_set_id={{ study_set.id }}{% elif scope and scope.tag_value %}?tag={{ scope.tag_value|urlencode }}{% else %}?{% endif %}{% if deck or study_set or scope and scope.tag_value %}&{% endif %}pull_ahead=1"
+                hx-target="#review-panel"
+                hx-swap="innerHTML"
+                class="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 shadow-sm"
+            >
+                Keep studying (pull upcoming cards)
+            </button>
+            <p class="text-[11px] text-gray-500">We'll prioritise the cards closest to coming due.</p>
+        </div>
     </div>
     {% if can_undo %}
         <form method="post" action="{% url 'review:undo' %}" hx-post="{% url 'review:undo' %}" hx-target="#review-panel" hx-swap="innerHTML" class="mx-auto flex max-w-xs">
@@ -21,6 +32,8 @@
             <div class="text-xs text-gray-500">Custom set: {{ study_set.name }}</div>
         {% elif deck %}
             <div class="text-xs text-gray-500">Deck: {{ deck.full_path }}</div>
+        {% elif scope and scope.tag_value %}
+            <div class="text-xs text-gray-500">Tag: {{ scope.tag_value }}</div>
         {% endif %}
     </div>
 </div>
