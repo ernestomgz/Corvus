@@ -16,6 +16,7 @@ services:
   web:
     build: ./web
     command: ["/start.sh"]
+    restart: unless-stopped
     volumes:
       - ./web:/app
       - media:/app/media
@@ -23,7 +24,7 @@ services:
     env_file:
       - .env
     ports:
-      - "8000:8000"
+      - "8001:8000"
     depends_on:
       - db
 

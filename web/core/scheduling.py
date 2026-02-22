@@ -149,44 +149,52 @@ def _apply_rating(card: Card, state: SchedulingState, rating: int, now: datetime
 
     return became_leech, was_lapse
 
-
 def _handle_learning(card: Card, state: SchedulingState, rating: int, now: datetime, config: SchedulerConfig) -> None:
     steps = config.learning_steps_minutes or [1]
-    if state.queue_status == 'new':
-        state.queue_status = 'learn'
+    state.queue_status = 'learn'
+
+    # Keep the raw index so we can detect "past last step" (used to graduate).
+    raw_index = max(state.learning_step_index, 0)
+    max_index = max(len(steps) - 1, 0)
+
+    # If we are beyond the last step, we should graduate on any successful response.
+    # (Again should still reset learning.)
+    if raw_index > max_index:
+        if rating == 0:  # Again
+            state.learning_step_index = 0
+            state.due_at = now + _minutes_delta(steps[0])
+            return
+        # Successful response after completing learning steps -> graduate.
+        _graduate_to_review(state, now, config, config.graduating_interval_days)
+        return
+
+    # Normal case: we're within steps.
+    index = raw_index
 
     if rating == 0:  # Again
-        state.queue_status = 'learn'
         state.learning_step_index = 0
         state.due_at = now + _minutes_delta(steps[0])
         return
 
     if rating == 1:  # Hard
-        if state.learning_step_index <= 0:
-            hard_days = max(config.hard_min_days, int(round(config.graduating_interval_days * config.hard_graduating_interval_factor)))
-            _graduate_to_review(state, now, config, hard_days)
-        else:
-            state.queue_status = 'learn'
-            index = min(max(state.learning_step_index, 0), len(steps) - 1)
-            state.learning_step_index = index
-            state.due_at = now + _minutes_delta(steps[index])
+        state.learning_step_index = index
+        state.due_at = now + _minutes_delta(steps[index])
         return
 
     if rating == 2:  # Good
-        index = max(state.learning_step_index, 0)
-        if index >= len(steps):
-            _graduate_to_review(state, now, config, config.graduating_interval_days)
+        if index < max_index:
+            # Advance to the next step and schedule the next step's delay.
+            state.learning_step_index = index + 1
+            state.due_at = now + _minutes_delta(steps[index + 1])
             return
-        index = min(index, len(steps) - 1)
-        delay = steps[index]
-        state.queue_status = 'learn'
-        state.due_at = now + _minutes_delta(delay)
-        state.learning_step_index = index + 1
+
+        # index == max_index: one more pass on last step before graduating next time
+        state.learning_step_index = max_index + 1
+        state.due_at = now + _minutes_delta(steps[max_index])
         return
 
     if rating == 3:  # Easy
-        easy_days = config.easy_bonus_days or config.graduating_interval_days
-        easy_days = max(1, int(round(easy_days)))
+        easy_days = 1
         _graduate_to_review(state, now, config, easy_days)
 
 

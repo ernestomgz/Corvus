@@ -5,8 +5,12 @@ from typing import Iterable
 
 from django.conf import settings
 from django.contrib.postgres.fields import ArrayField
+from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
+
+from .knowledge_tags import build_knowledge_tag
 
 
 class UserScopedQuerySet(models.QuerySet):
@@ -176,6 +180,175 @@ class StudySet(models.Model):
         if self.deck:
             return f"{self.name} (Deck: {self.deck.full_path()})"
         return self.name
+
+
+class UserSettings(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='settings')
+    default_deck = models.ForeignKey(Deck, null=True, blank=True, on_delete=models.SET_NULL, related_name='default_for_users')
+    default_study_set = models.ForeignKey(
+        StudySet, null=True, blank=True, on_delete=models.SET_NULL, related_name='default_for_users'
+    )
+    new_card_daily_limit = models.IntegerField(default=20)
+    notifications_enabled = models.BooleanField(default=False)
+    theme = models.CharField(max_length=20, default='system')
+    plugin_github_enabled = models.BooleanField(default=False)
+    plugin_github_repo = models.CharField(max_length=255, blank=True)
+    plugin_github_branch = models.CharField(max_length=255, default='update-cards-bot')
+    plugin_github_token = models.TextField(blank=True)
+    plugin_ai_enabled = models.BooleanField(default=False)
+    plugin_ai_provider = models.CharField(max_length=50, blank=True)
+    plugin_ai_api_key = models.TextField(blank=True)
+    scheduled_pull_interval = models.CharField(
+        max_length=20,
+        default='off',
+        choices=[('off', 'Off'), ('hourly', 'Hourly'), ('daily', 'Daily')],
+    )
+    max_delete_threshold = models.IntegerField(default=50)
+    require_recent_pull_before_push = models.BooleanField(default=True)
+    push_preview_required = models.BooleanField(default=True)
+    last_pull_at = models.DateTimeField(null=True, blank=True)
+    last_push_at = models.DateTimeField(null=True, blank=True)
+    last_sync_status = models.CharField(max_length=32, blank=True)
+    last_sync_error = models.TextField(blank=True)
+    last_sync_summary = models.JSONField(default=dict, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['user_id']
+
+    def to_export_payload(self) -> dict:
+        """Return a safe dict for export (excludes secrets by default)."""
+        return {
+            'default_deck_id': self.default_deck_id,
+            'default_study_set_id': self.default_study_set_id,
+            'new_card_daily_limit': self.new_card_daily_limit,
+            'notifications_enabled': self.notifications_enabled,
+            'theme': self.theme,
+            'plugin_github': {
+                'enabled': self.plugin_github_enabled,
+                'repo': self.plugin_github_repo,
+                'branch': self.plugin_github_branch,
+            },
+            'plugin_ai': {
+                'enabled': self.plugin_ai_enabled,
+                'provider': self.plugin_ai_provider,
+            },
+            'sync_policy': {
+                'scheduled_pull': self.scheduled_pull_interval,
+                'max_delete_threshold': self.max_delete_threshold,
+                'require_recent_pull_before_push': self.require_recent_pull_before_push,
+                'push_preview_required': self.push_preview_required,
+            },
+            'last_sync': {
+                'last_pull_at': self.last_pull_at.isoformat() if self.last_pull_at else None,
+                'last_push_at': self.last_push_at.isoformat() if self.last_push_at else None,
+                'status': self.last_sync_status or '',
+                'summary': self.last_sync_summary or {},
+            },
+            'metadata': self.metadata or {},
+        }
+
+
+class KnowledgeNodeQuerySet(models.QuerySet):
+    def for_user(self, user: settings.AUTH_USER_MODEL) -> "KnowledgeNodeQuerySet":
+        return self.filter(knowledge_map__user=user)
+
+
+class KnowledgeMap(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='knowledge_maps',
+    )
+    slug = models.SlugField(max_length=64)
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = UserScopedQuerySet.as_manager()
+
+    class Meta:
+        ordering = ['name']
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'slug'], name='unique_knowledge_map_slug_per_user'),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.slug})"
+
+
+class KnowledgeNode(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    knowledge_map = models.ForeignKey(
+        KnowledgeMap,
+        on_delete=models.CASCADE,
+        related_name='nodes',
+    )
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        related_name='children',
+        null=True,
+        blank=True,
+    )
+    identifier = models.CharField(max_length=96)
+    title = models.CharField(max_length=255)
+    definition = models.TextField(blank=True)
+    guidance = models.TextField(blank=True)
+    sources = models.JSONField(default=list, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    display_order = models.IntegerField(default=0)
+    tag_value = models.CharField(max_length=255, unique=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = KnowledgeNodeQuerySet.as_manager()
+
+    class Meta:
+        ordering = ['knowledge_map', 'display_order', 'title']
+        indexes = [
+            models.Index(fields=['knowledge_map', 'parent']),
+            models.Index(fields=['knowledge_map', 'identifier']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['knowledge_map', 'identifier'],
+                name='unique_knowledge_node_identifier_per_map',
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.knowledge_map.slug}:{self.identifier}"
+
+    def clean(self) -> None:
+        super().clean()
+        if self.parent and self.parent.knowledge_map_id != self.knowledge_map_id:
+            raise ValidationError('parent must belong to the same knowledge map')
+
+    def save(self, *args, **kwargs) -> None:
+        self.clean()
+        if self.knowledge_map_id and self.identifier:
+            calculated = build_knowledge_tag(self.knowledge_map.slug, self.identifier)
+            if self.tag_value != calculated:
+                self.tag_value = calculated
+        super().save(*args, **kwargs)
+
+    def knowledge_tag(self) -> str:
+        return self.tag_value
+
+    def full_path(self) -> str:
+        segments = [self.title]
+        ancestor = self.parent
+        while ancestor is not None:
+            segments.append(ancestor.title)
+            ancestor = ancestor.parent
+        return ' / '.join(reversed(segments))
 
 
 class Card(models.Model):

@@ -1,0 +1,53 @@
+{
+  "map": {
+    "slug": "learning-grid",
+    "name": "Learning Grid",
+    "description": "Example map showing how to describe knowledge trees.",
+    "metadata": {
+      "version": 1,
+      "owner": "demo"
+    }
+  },
+  "nodes": [
+    {
+      "key": "foundations",
+      "title": "Foundations",
+      "definition": "Baseline topics that must be understood before moving deeper.",
+      "guidance": "Use this for introductory material only.",
+      "sources": [
+        {
+          "label": "Team Notes",
+          "url": "https://example.org/internal-notes"
+        }
+      ],
+      "children": [
+        {
+          "key": "foundations.scope",
+          "title": "Scope And Limits",
+          "definition": "Clarify what the learner is expected to cover.",
+          "sources": ["Handbook Section 2"],
+          "children": []
+        },
+        {
+          "key": "foundations.vocabulary",
+          "title": "Vocabulary",
+          "definition": "Key words and phrases that appear in every card.",
+          "children": []
+        }
+      ]
+    },
+    {
+      "key": "applications",
+      "title": "Applications",
+      "definition": "Nodes in this branch describe concrete activities or projects.",
+      "children": [
+        {
+          "key": "applications.practice",
+          "title": "Guided Practice",
+          "definition": "Exercises with feedback.",
+          "children": []
+        }
+      ]
+    }
+  ]
+}

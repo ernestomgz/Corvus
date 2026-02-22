@@ -1,0 +1,405 @@
+{% extends 'base.html' %}
+{% load study_sets %}
+{% block title %}Dashboard | Corvus{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-4xl space-y-6">
+    <header class="rounded border bg-white p-6 shadow space-y-4">
+        <div class="space-y-2">
+            <p class="text-xs uppercase tracking-wide text-gray-499">Daily focus</p>
+            <h1 class="text-2xl font-semibold text-gray-900">Dashboard</h1>
+            <p class="text-sm text-gray-600">
+                {% if active_study_set %}
+                    Working from <strong>{{ active_study_set.name }}</strong>
+                    {% if active_study_set.kind == 'tag' %}
+                        (tag: {{ active_study_set.tag }})
+                    {% elif active_deck %}
+                        (deck: {{ active_deck.full_path }})
+                    {% endif %}
+                {% elif active_scope and active_scope.tag_value %}
+                    Studying tag <strong>{{ active_scope.tag_value }}</strong>
+                {% elif active_deck %}
+                    Studying deck <strong>{{ active_deck.full_path }}</strong>
+                {% else %}
+                    Reviewing across all decks. Keep a steady pace and return here when you have time.
+                {% endif %}
+            </p>
+        </div>
+        <details class="rounded border border-dashed px-4 py-3 text-sm text-gray-600 bg-gray-50/60">
+            <summary class="cursor-pointer text-sm font-semibold text-gray-700">Change focus</summary>
+            <form method="get" class="mt-3 space-y-3">
+                <div class="space-y-1">
+                    <label for="deck" class="text-xs font-medium uppercase tracking-wide text-gray-500">Deck</label>
+                    <select name="deck_id" id="deck" class="w-full rounded border border-gray-300 px-3 py-2">
+                        <option value="">All decks</option>
+                        {% for deck in decks %}
+                            <option value="{{ deck.id }}" {% if active_deck and active_deck.id == deck.id %}selected{% endif %}>{{ deck.full_path }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="space-y-1">
+                    <label for="study-set" class="text-xs font-medium uppercase tracking-wide text-gray-500">Custom study set</label>
+                    <select name="study_set_id" id="study-set" class="w-full rounded border border-gray-300 px-3 py-2">
+                        <option value="">All sets</option>
+                        {% for study_set in study_sets %}
+                            <option value="{{ study_set.id }}" {% if active_study_set and active_study_set.id == study_set.id %}selected{% endif %}>
+                                {{ study_set.name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <input type="hidden" name="year" value="{{ selected_year }}">
+                <div class="flex flex-wrap gap-2">
+                    <button type="submit" class="rounded bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800">Apply</button>
+                    <a href="{% url 'decks:list' %}" class="text-sm text-gray-500 hover:text-gray-700">Manage study sets</a>
+                </div>
+            </form>
+        </details>
+    </header>
+
+    <section class="grid gap-4 rounded border bg-white p-6 text-center shadow md:grid-cols-3">
+        <div>
+            <h2 class="text-sm uppercase tracking-wide text-gray-500">New</h2>
+            <p class="mt-2 text-3xl font-semibold text-indigo-600">{{ summary.new_count }}</p>
+        </div>
+        <div>
+            <h2 class="text-sm uppercase tracking-wide text-gray-500">Review</h2>
+            <p class="mt-2 text-3xl font-semibold text-indigo-600">{{ summary.review_count }}</p>
+        </div>
+        <div>
+            <h2 class="text-sm uppercase tracking-wide text-gray-500">Due Now</h2>
+            <p class="mt-2 text-3xl font-semibold text-red-500">{{ summary.due_count }}</p>
+        </div>
+    </section>
+
+    <section class="flex flex-wrap items-center justify-between gap-3 rounded border bg-white p-6 shadow">
+        <div class="space-y-1">
+            <h2 class="text-lg font-semibold text-gray-800">Ready to study?</h2>
+            <p class="text-sm text-gray-600">Launch the focused review session in a dedicated page.</p>
+        </div>
+        {% url 'review:study' as base_study_url %}
+        {% if active_deck %}
+            {% with study_url=base_study_url|add:'?deck_id='|add:active_deck.id %}
+                <a href="{{ study_url }}" class="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Study now</a>
+            {% endwith %}
+        {% elif active_study_set %}
+            {% with study_url=base_study_url|add:'?study_set_id='|add:active_study_set.id %}
+                <a href="{{ study_url }}" class="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Study now</a>
+            {% endwith %}
+        {% elif active_scope and active_scope.tag_value %}
+            {% with study_url=base_study_url|add:'?tag='|add:active_scope.tag_value|urlencode %}
+                <a href="{{ study_url }}" class="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Study now</a>
+            {% endwith %}
+        {% else %}
+            <a href="{{ base_study_url }}" class="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Study now</a>
+        {% endif %}
+    </section>
+
+    <section class="rounded border bg-white p-6 shadow space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+                <h2 class="text-lg font-semibold text-gray-800">Sync</h2>
+                <p class="text-sm text-gray-600">Manage GitHub updates and pushes from Settings.</p>
+            </div>
+            <a href="{% url 'settings:detail' %}" class="rounded border border-gray-300 px-3 py-1 text-sm text-gray-700 hover:bg-gray-50">Open Settings</a>
+        </div>
+        <div class="text-sm text-gray-600 space-y-1">
+            <div>Status: <span class="font-semibold">{{ user_settings.last_sync_status|default:"Idle" }}</span></div>
+            <div>Repo: <code class="font-mono text-xs bg-gray-100 px-1 rounded">{{ user_settings.plugin_github_repo|default:"not set" }}</code></div>
+            <div>Branch: <code class="font-mono text-xs bg-gray-100 px-1 rounded">{{ user_settings.plugin_github_branch|default:"update-cards-bot" }}</code></div>
+            <div class="text-xs text-gray-500">Use Settings to pull, preview, and push changes.</div>
+        </div>
+    </section>
+
+    <section class="rounded border bg-white p-6 shadow space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center gap-3">
+                <h2 class="text-lg font-semibold text-gray-700">Study Heatmap</h2>
+                <label for="heatmap-year" class="text-xs uppercase tracking-wide text-gray-500">Year</label>
+                <select id="heatmap-year" data-user-selected="{{ user_selected_year|yesno:'true,false' }}" class="rounded border border-gray-300 px-2 py-1 text-sm text-gray-700">
+                    {% for year in heatmap_years %}
+                        <option value="{{ year }}" {% if year == selected_year %}selected{% endif %}>{{ year }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="text-sm text-gray-500" id="heatmap-streak">Loading streak...</div>
+        </div>
+        <p class="text-sm text-gray-500">Activity from past reviews and upcoming due cards.</p>
+        <div id="study-heatmap" class="heatmap-grid" data-heatmap-summary-url="{% url 'api:analytics-heatmap' %}" data-heatmap-day-url-template="{% url 'api:analytics-heatmap-day' 'DATE_PLACEHOLDER' %}"></div>
+        <div class="heatmap-legend text-xs text-gray-500">
+            <span>Less</span>
+            <div class="heatmap-legend-cell level-0"></div>
+            <div class="heatmap-legend-cell level-1"></div>
+            <div class="heatmap-legend-cell level-2"></div>
+            <div class="heatmap-legend-cell level-3"></div>
+            <div class="heatmap-legend-cell level-4"></div>
+            <span>More</span>
+        </div>
+    </section>
+</div>
+
+<div id="heatmap-modal" class="fixed inset-0 z-40 hidden items-center justify-center bg-gray-900/40 p-4">
+    <div class="max-w-lg w-full rounded bg-white shadow-lg">
+        <div class="flex items-center justify-between border-b px-4 py-2">
+            <h3 class="text-lg font-semibold" id="heatmap-modal-title"></h3>
+            <button type="button" class="text-gray-500 hover:text-gray-700" data-modal-close>&times;</button>
+        </div>
+        <div class="max-h-96 overflow-y-auto p-4 space-y-4" id="heatmap-modal-body"></div>
+    </div>
+</div>
+
+<style>
+    .heatmap-grid { display: flex; gap: 6px; align-items: stretch; overflow-x: auto; padding-bottom: 4px; flex-wrap: nowrap; max-width: 100%; }
+    .heatmap-column { display: grid; grid-template-rows: repeat(7, 14px); gap: 4px; min-width: 16px; }
+    .heatmap-cell { width: 14px; height: 14px; border-radius: 3px; background-color: #e5e7eb; cursor: pointer; transition: transform 0.1s ease-in-out; }
+    .heatmap-cell:hover { transform: scale(1.1); }
+    .heatmap-cell.level-0 { background-color: #e5e7eb; }
+    .heatmap-cell.level-1 { background-color: #c6e48b; }
+    .heatmap-cell.level-2 { background-color: #7bc96f; }
+    .heatmap-cell.level-3 { background-color: #239a3b; }
+    .heatmap-cell.level-4 { background-color: #196127; }
+    .heatmap-cell.has-due { box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.65); }
+    .heatmap-legend { display: flex; align-items: center; gap: 6px; }
+    .heatmap-legend-cell { width: 16px; height: 16px; border-radius: 3px; background-color: #e5e7eb; }
+    .heatmap-legend-cell.level-1 { background-color: #c6e48b; }
+    .heatmap-legend-cell.level-2 { background-color: #7bc96f; }
+    .heatmap-legend-cell.level-3 { background-color: #239a3b; }
+    .heatmap-legend-cell.level-4 { background-color: #196127; }
+    .heatmap-tooltip { position: absolute; z-index: 50; background-color: #ffffff; border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 10px; font-size: 12px; color: #374151; box-shadow: 0 10px 25px rgba(15, 23, 42, 0.15); pointer-events: none; opacity: 0; transition: opacity 0.1s ease-in-out; }
+    @media (max-width: 640px) {
+        .heatmap-grid { gap: 4px; padding-bottom: 6px; }
+        .heatmap-column { grid-template-rows: repeat(7, 12px); gap: 3px; min-width: 12px; }
+        .heatmap-cell { width: 12px; height: 12px; border-radius: 2px; }
+        .heatmap-legend-cell { width: 12px; height: 12px; }
+    }
+</style>
+<script>
+    (function() {
+        const grid = document.getElementById('study-heatmap');
+        if (!grid) {
+            return;
+        }
+        const summaryUrl = grid.dataset.heatmapSummaryUrl;
+        const dayTemplate = grid.dataset.heatmapDayUrlTemplate;
+        const streakEl = document.getElementById('heatmap-streak');
+        const yearSelect = document.getElementById('heatmap-year');
+        const yearField = document.querySelector('form [name="year"]');
+        const userSelectedYear = yearSelect ? yearSelect.dataset.userSelected === 'true' : false;
+        const currentYearValue = new Date().getFullYear().toString();
+
+        if (yearSelect) {
+            const hasCurrentYear = Array.from(yearSelect.options || []).some((option) => option.value === currentYearValue);
+            if (!hasCurrentYear) {
+                const option = document.createElement('option');
+                option.value = currentYearValue;
+                option.textContent = currentYearValue;
+                yearSelect.insertBefore(option, yearSelect.firstChild);
+            }
+            if (!userSelectedYear) {
+                yearSelect.value = currentYearValue;
+                if (yearField) {
+                    yearField.value = currentYearValue;
+                }
+            }
+        }
+
+        const tooltip = document.createElement('div');
+        tooltip.className = 'heatmap-tooltip hidden';
+        document.body.appendChild(tooltip);
+
+        const modal = document.getElementById('heatmap-modal');
+        const modalTitle = document.getElementById('heatmap-modal-title');
+        const modalBody = document.getElementById('heatmap-modal-body');
+        const closeButtons = modal ? modal.querySelectorAll('[data-modal-close]') : [];
+        const closeModal = () => {
+            modal.classList.add('hidden');
+            modalBody.innerHTML = '';
+        };
+        closeButtons.forEach((btn) => btn.addEventListener('click', closeModal));
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                closeModal();
+            }
+        });
+
+        const levelForCount = (count) => {
+            if (!count) {
+                return 0;
+            }
+            if (count < 3) {
+                return 1;
+            }
+            if (count < 6) {
+                return 2;
+            }
+            if (count < 10) {
+                return 3;
+            }
+            return 4;
+        };
+
+        const hideTooltip = () => {
+            tooltip.classList.add('hidden');
+            tooltip.style.opacity = '0';
+        };
+
+        const showTooltip = (event, day) => {
+            const cellRect = event.target.getBoundingClientRect();
+            const dateObj = new Date(day.date + 'T00:00:00');
+            tooltip.innerHTML = `
+                <div class="font-semibold">${dateObj.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</div>
+                <div>${day.reviewed} review${day.reviewed === 1 ? '' : 's'}</div>
+                <div>${day.due} due</div>
+            `;
+            tooltip.style.left = `${window.scrollX + cellRect.left + cellRect.width + 8}px`;
+            tooltip.style.top = `${window.scrollY + cellRect.top - cellRect.height}px`;
+            tooltip.classList.remove('hidden');
+            tooltip.style.opacity = '1';
+        };
+
+        const openDay = (day) => {
+            const url = dayTemplate.replace('DATE_PLACEHOLDER', day.date);
+            modal.classList.remove('hidden');
+            const dateObj = new Date(day.date + 'T00:00:00');
+            modalTitle.textContent = dateObj.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+            modalBody.innerHTML = '<p class="text-sm text-gray-500">Loading...</p>';
+            fetch(url)
+                .then((response) => {
+                    if (!response.ok) {
+                        throw new Error('Failed');
+                    }
+                    return response.json();
+                })
+                .then((payload) => {
+                    const fragments = [];
+                    if (payload.reviews && payload.reviews.length) {
+                        const listItems = payload.reviews.map((item) => {
+                            const row = document.createElement('div');
+                            row.className = 'rounded border border-gray-200 bg-gray-50 px-3 py-2';
+                            const front = item.front_md || '';
+                            const excerpt = front.length > 120 ? `${front.slice(0, 117)}...` : front;
+                            row.innerHTML = `
+                                <div class="text-xs uppercase tracking-wide text-gray-500">Review - ${item.deck}</div>
+                                <div class="text-sm text-gray-800">${excerpt.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+                                <div class="text-xs text-gray-500">Rating: ${item.rating} - ${new Date(item.reviewed_at).toLocaleTimeString()}</div>
+                            `;
+                            return row;
+                        });
+                        const container = document.createElement('div');
+                        container.innerHTML = '<h4 class="text-sm font-semibold text-gray-700 mb-2">Reviews</h4>';
+                        listItems.forEach((el) => container.appendChild(el));
+                        fragments.push(container);
+                    }
+                    if (payload.due && payload.due.length) {
+                        const listItems = payload.due.map((item) => {
+                            const row = document.createElement('div');
+                            row.className = 'rounded border border-indigo-100 bg-indigo-50 px-3 py-2';
+                            row.innerHTML = `
+                                <div class="text-xs uppercase tracking-wide text-indigo-500">Due - ${item.deck}</div>
+                                <div class="text-xs text-indigo-600">Queue: ${item.queue_status}</div>
+                                ${item.due_at ? `<div class=\"text-xs text-indigo-500\">Due at ${new Date(item.due_at).toLocaleTimeString()}</div>` : ''}
+                            `;
+                            return row;
+                        });
+                        const container = document.createElement('div');
+                        container.innerHTML = '<h4 class="text-sm font-semibold text-gray-700 mb-2">Due</h4>';
+                        listItems.forEach((el) => container.appendChild(el));
+                        fragments.push(container);
+                    }
+                    if (!fragments.length) {
+                        modalBody.innerHTML = '<p class="text-sm text-gray-500">No cards reviewed or due on this day.</p>';
+                    } else {
+                        modalBody.innerHTML = '';
+                        fragments.forEach((fragment) => modalBody.appendChild(fragment));
+                    }
+                })
+                .catch(() => {
+                    modalBody.innerHTML = '<p class="text-sm text-red-600">Unable to load day details.</p>';
+                });
+        };
+
+        const renderHeatmap = (data) => {
+            grid.innerHTML = '';
+            const days = Array.isArray(data.days) ? data.days : [];
+            const weekCount = Math.max(1, Math.ceil(days.length / 7));
+            const columns = [];
+            for (let week = 0; week < weekCount; week += 1) {
+                const column = document.createElement('div');
+                column.className = 'heatmap-column';
+                columns.push(column);
+                grid.appendChild(column);
+            }
+            days.forEach((day, index) => {
+                const weekIndex = Math.floor(index / 7);
+                const column = columns[weekIndex] || columns[columns.length - 1];
+                if (!column) {
+                    return;
+                }
+                const cell = document.createElement('div');
+                const level = levelForCount(day.reviewed || 0);
+                cell.className = `heatmap-cell level-${level}${day.due ? ' has-due' : ''}`;
+                column.appendChild(cell);
+                cell.addEventListener('mouseenter', (event) => showTooltip(event, day));
+                cell.addEventListener('mouseleave', hideTooltip);
+                cell.addEventListener('click', () => openDay(day));
+            });
+            columns.forEach((column) => {
+                while (column.children.length < 7) {
+                    const filler = document.createElement('div');
+                    filler.className = 'heatmap-cell level-0 heatmap-cell-empty';
+                    column.appendChild(filler);
+                }
+            });
+            document.addEventListener('scroll', hideTooltip, true);
+            grid.addEventListener('mouseleave', hideTooltip);
+        };
+
+        const buildSummaryUrl = () => {
+            if (!summaryUrl) {
+                return summaryUrl;
+            }
+            const url = new URL(summaryUrl, window.location.origin);
+            if (yearSelect) {
+                url.searchParams.set('year', yearSelect.value);
+            }
+            return url.toString();
+        };
+
+        const fetchSummary = () => {
+            const url = buildSummaryUrl();
+            if (!url) {
+                return;
+            }
+            fetch(url)
+                .then((response) => {
+                    if (!response.ok) {
+                        throw new Error('Request failed');
+                    }
+                    return response.json();
+                })
+                .then((data) => {
+                    renderHeatmap(data);
+                    if (streakEl) {
+                        streakEl.textContent = `Current streak: ${data.current_streak} day${data.current_streak === 1 ? '' : 's'} - Longest: ${data.longest_streak}`;
+                    }
+                })
+                .catch(() => {
+                    if (streakEl) {
+                        streakEl.textContent = 'Unable to load heatmap data.';
+                    }
+                });
+        };
+
+        if (yearSelect) {
+            yearSelect.addEventListener('change', () => {
+                yearSelect.dataset.userSelected = 'true';
+                if (yearField) {
+                    yearField.value = yearSelect.value;
+                }
+                fetchSummary();
+            });
+        }
+
+        fetchSummary();
+    })();
+</script>
+{% endblock %}

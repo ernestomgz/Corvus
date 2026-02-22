@@ -8,5 +8,5 @@ from django.shortcuts import redirect
 def landing(request: HttpRequest) -> HttpResponse:
     """Redirect visitors to the appropriate homepage."""
     if request.user.is_authenticated:
-        return redirect('review:today')
+        return redirect('review:dashboard')
     return redirect('accounts:login')

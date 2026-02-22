@@ -1,6 +1,17 @@
 from django.contrib import admin
 
-from .models import Card, CardImportFormat, CardType, Deck, ExternalId, Import, Review, SchedulingState
+from .models import (
+    Card,
+    CardImportFormat,
+    CardType,
+    Deck,
+    ExternalId,
+    Import,
+    KnowledgeMap,
+    KnowledgeNode,
+    Review,
+    SchedulingState,
+)
 
 
 class CardImportFormatInline(admin.TabularInline):
@@ -64,3 +75,24 @@ class ExternalIdAdmin(admin.ModelAdmin):
 class ImportAdmin(admin.ModelAdmin):
     list_display = ('id', 'user', 'kind', 'status', 'created_at')
     list_filter = ('kind', 'status', 'user')
+
+
+class KnowledgeNodeInline(admin.TabularInline):
+    model = KnowledgeNode
+    extra = 0
+    fields = ('title', 'identifier', 'parent', 'display_order', 'definition')
+
+
+@admin.register(KnowledgeMap)
+class KnowledgeMapAdmin(admin.ModelAdmin):
+    list_display = ('name', 'slug', 'user', 'updated_at')
+    search_fields = ('name', 'slug')
+    list_filter = ('user',)
+    inlines = [KnowledgeNodeInline]
+
+
+@admin.register(KnowledgeNode)
+class KnowledgeNodeAdmin(admin.ModelAdmin):
+    list_display = ('title', 'knowledge_map', 'identifier', 'parent', 'display_order')
+    list_filter = ('knowledge_map',)
+    search_fields = ('title', 'identifier', 'tag_value')

@@ -1,0 +1,97 @@
+{% extends 'base.html' %}
+{% block title %}Study Now | Corvus{% endblock %}
+{% block content %}
+<div class="mx-auto w-full max-w-5xl space-y-6 px-3 sm:px-4 lg:px-6">
+    <header class="rounded border bg-white p-5 shadow-sm space-y-4">
+        <div class="flex flex-col gap-2">
+            <div class="flex flex-wrap items-center gap-2">
+                <span class="text-xs uppercase tracking-wide text-gray-499">Study now</span>
+                <span class="rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
+                    {% if study_set %}
+                        Preset: {{ study_set.name }}
+                    {% elif scope and scope.tag_value %}
+                        Tag: {{ scope.tag_value }}
+                    {% elif deck %}
+                        Deck: {{ deck.full_path }}
+                    {% else %}
+                        All decks
+                    {% endif %}
+                </span>
+            </div>
+            <h1 class="text-2xl font-semibold text-gray-900">Focused review</h1>
+            <p class="text-sm text-gray-600">Shortcuts: Space/Enter = Reveal/Good, 1-4 = Again/Hard/Good/Easy, Ctrl+Enter to reveal while typing.</p>
+        </div>
+        <div class="grid gap-3 rounded border bg-gray-50 p-4 text-center md:grid-cols-3">
+            <div>
+                <h2 class="text-xs uppercase tracking-wide text-gray-500">New</h2>
+                <p class="mt-1 text-2xl font-semibold text-indigo-600">{{ summary.new_count }}</p>
+            </div>
+            <div>
+                <h2 class="text-xs uppercase tracking-wide text-gray-500">Review</h2>
+                <p class="mt-1 text-2xl font-semibold text-indigo-600">{{ summary.review_count }}</p>
+            </div>
+            <div>
+                <h2 class="text-xs uppercase tracking-wide text-gray-500">Due Now</h2>
+                <p class="mt-1 text-2xl font-semibold text-red-500">{{ summary.due_count }}</p>
+            </div>
+        </div>
+        <div class="space-y-2">
+            <div class="flex items-center justify-between text-xs text-gray-600">
+                <span>Session progress</span>
+                <span id="session-progress-label">0%</span>
+            </div>
+            <div class="h-2 w-full rounded-full bg-gray-200 overflow-hidden">
+                <div id="session-progress-bar" class="h-2 rounded-full bg-indigo-500 transition-all duration-300" style="width: 0%;"></div>
+            </div>
+        </div>
+    </header>
+
+    <section class="rounded border bg-white p-4 sm:p-6 shadow-sm min-h-[60vh]" id="review-shell"
+             data-total="{{ summary.new_count|add:summary.review_count|add:summary.due_count }}">
+        {% if deck %}
+            <div id="review-panel" hx-get="{% url 'review:next' %}?deck_id={{ deck.id }}{% if pull_ahead %}&pull_ahead=1{% endif %}" hx-trigger="load" hx-target="#review-panel" hx-swap="innerHTML">
+                <div class="py-10 text-center text-gray-500">Loading...</div>
+            </div>
+        {% elif study_set %}
+            <div id="review-panel" hx-get="{% url 'review:next' %}?study_set_id={{ study_set.id }}{% if pull_ahead %}&pull_ahead=1{% endif %}" hx-trigger="load" hx-target="#review-panel" hx-swap="innerHTML">
+                <div class="py-10 text-center text-gray-500">Loading...</div>
+            </div>
+        {% elif scope and scope.tag_value %}
+            <div id="review-panel" hx-get="{% url 'review:next' %}?tag={{ scope.tag_value|urlencode }}{% if pull_ahead %}&pull_ahead=1{% endif %}" hx-trigger="load" hx-target="#review-panel" hx-swap="innerHTML">
+                <div class="py-10 text-center text-gray-500">Loading...</div>
+            </div>
+        {% else %}
+            <div id="review-panel" hx-get="{% url 'review:next' %}{% if pull_ahead %}?pull_ahead=1{% endif %}" hx-trigger="load" hx-target="#review-panel" hx-swap="innerHTML">
+                <div class="py-10 text-center text-gray-500">Loading...</div>
+            </div>
+        {% endif %}
+    </section>
+</div>
+<script>
+    (function() {
+        const shell = document.getElementById('review-shell');
+        const bar = document.getElementById('session-progress-bar');
+        const label = document.getElementById('session-progress-label');
+        const initialTotal = parseInt(shell?.dataset.total || '0', 10) || 0;
+
+        const updateProgress = () => {
+            if (!shell || !bar || !label) return;
+            const panel = document.getElementById('review-panel');
+            if (!panel) return;
+            const remainingContainer = panel.querySelector('[data-remaining-counts]');
+            const remainingNew = parseInt(remainingContainer?.dataset.remainingNew || '0', 10) || 0;
+            const remainingReview = parseInt(remainingContainer?.dataset.remainingReview || '0', 10) || 0;
+            const remainingDue = parseInt(remainingContainer?.dataset.remainingDue || '0', 10) || 0;
+            const remainingTotal = remainingNew + remainingReview + remainingDue;
+            const total = initialTotal || (remainingTotal || 1);
+            const completed = Math.max(0, total - remainingTotal);
+            const percent = Math.min(100, Math.round((completed / total) * 100));
+            bar.style.width = `${percent}%`;
+            label.textContent = `${percent}%`;
+        };
+
+        document.addEventListener('htmx:afterSwap', updateProgress);
+        document.addEventListener('DOMContentLoaded', updateProgress);
+    })();
+</script>
+{% endblock %}

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import io
 import json
 import re
 import zipfile
+import difflib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -20,6 +22,10 @@ from core.services.card_types import resolve_card_type
 from core.services.decks import ensure_deck_path
 
 OBSIDIAN_LINK_PATTERN = re.compile(r'!\[\[(?P<path>[^\]]+)\]\]')
+MEDIA_WIKI_PATTERN = re.compile(
+    r'\[\[(?P<path>[^\]]+?\.(?:png|jpe?g|gif|svg|webp|mp3|wav|ogg|mp4|mov|m4a|flac))(?:\|[^\]]+)?\]\]',
+    re.IGNORECASE,
+)
 ID_PATTERN = re.compile(r'^\s*id::\s*(?P<id>[\w:-]+)', re.IGNORECASE)
 TAGS_PATTERN = re.compile(r'^\s*tags::\s*(?P<tags>.+)$', re.IGNORECASE)
 MEDIA_PATTERN = re.compile(r'!\[[^\]]*\]\(([^)]+)\)')
@@ -59,6 +65,79 @@ class MarkerResolver:
 
 class MarkdownImportError(Exception):
     """Raised when the markdown importer encounters an unrecoverable problem."""
+
+
+def _inline_diff_html(source: str, target: str, *, highlight_insert: bool) -> str:
+    matcher = difflib.SequenceMatcher(None, source, target)
+    parts: list[str] = []
+    for tag, a0, a1, b0, b1 in matcher.get_opcodes():
+        if tag == 'equal':
+            parts.append(html.escape(source[a0:a1]))
+        else:
+            segment = target[b0:b1] if highlight_insert else source[a0:a1]
+            css = 'bg-green-100 text-green-800' if highlight_insert else 'bg-red-100 text-red-800'
+            parts.append(f'<mark class="{css} px-0.5 rounded-sm">{html.escape(segment)}</mark>')
+    return ''.join(parts) or '&nbsp;'
+
+
+def _render_diff_rows(before: str, after: str) -> list[dict]:
+    before_lines = before.splitlines() or ['']
+    after_lines = after.splitlines() or ['']
+    matcher = difflib.SequenceMatcher(None, before_lines, after_lines)
+    rows: list[dict] = []
+    before_no = 1
+    after_no = 1
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == 'equal':
+            for offset in range(i2 - i1):
+                rows.append({
+                    'op': ' ',
+                    'before': before_no,
+                    'after': after_no,
+                    'html': html.escape(before_lines[i1 + offset]) or '&nbsp;',
+                })
+                before_no += 1
+                after_no += 1
+        elif tag == 'delete':
+            for line in before_lines[i1:i2]:
+                rows.append({
+                    'op': '-',
+                    'before': before_no,
+                    'after': '',
+                    'html': _inline_diff_html(line, '', highlight_insert=False),
+                })
+                before_no += 1
+        elif tag == 'insert':
+            for line in after_lines[j1:j2]:
+                rows.append({
+                    'op': '+',
+                    'before': '',
+                    'after': after_no,
+                    'html': _inline_diff_html('', line, highlight_insert=True),
+                })
+                after_no += 1
+        elif tag == 'replace':
+            span = max(i2 - i1, j2 - j1)
+            for offset in range(span):
+                before_line = before_lines[i1 + offset] if (i1 + offset) < i2 else ''
+                after_line = after_lines[j1 + offset] if (j1 + offset) < j2 else ''
+                if before_line:
+                    rows.append({
+                        'op': '-',
+                        'before': before_no,
+                        'after': '',
+                        'html': _inline_diff_html(before_line, after_line, highlight_insert=False),
+                    })
+                    before_no += 1
+                if after_line:
+                    rows.append({
+                        'op': '+',
+                        'before': '',
+                        'after': after_no,
+                        'html': _inline_diff_html(before_line, after_line, highlight_insert=True),
+                    })
+                    after_no += 1
+    return rows
 
 
 def _normalise_deck_path(parts: list[str]) -> list[str]:
@@ -250,21 +329,51 @@ def _rewrite_media_links(
 
     def obsidian_replacer(match: re.Match) -> str:
         original_path = match.group('path')
-        registered = _register(original_path)
+        clean_path = original_path.split('|', 1)[0].strip()
+        registered = _register(clean_path)
         if not registered:
             return match.group(0)
         url, _meta = registered
-        alt = Path(original_path).stem or 'image'
+        alt = Path(clean_path).stem or 'image'
+        return f'![{alt}]({url})'
+
+    def wiki_media_replacer(match: re.Match) -> str:
+        original_path = match.group('path')
+        clean_path = original_path.split('|', 1)[0].strip()
+        registered = _register(clean_path)
+        if not registered:
+            return match.group(0)
+        url, _meta = registered
+        alt = Path(clean_path).stem or 'media'
         return f'![{alt}]({url})'
 
     rewritten = MEDIA_PATTERN.sub(markdown_replacer, text)
     rewritten = OBSIDIAN_LINK_PATTERN.sub(obsidian_replacer, rewritten)
+    rewritten = MEDIA_WIKI_PATTERN.sub(wiki_media_replacer, rewritten)
     return rewritten, media_items, missing_assets
+
+
+INLINE_MARKER_PATTERNS = [
+    re.compile(r'^\*\*(?P<text>.+?)\*\*$'),
+    re.compile(r'^__(?P<text>.+?)__$'),
+    re.compile(r'^\*(?P<text>.+?)\*$'),
+    re.compile(r'^_(?P<text>.+?)_$'),
+    re.compile(r'^`(?P<text>.+?)`$'),
+]
 
 
 def _clean_front_text(value: str) -> str:
     value = value.strip()
     value = HEADING_PATTERN.sub('', value)
+    value = value.strip()
+    while True:
+        for pattern in INLINE_MARKER_PATTERNS:
+            match = pattern.match(value)
+            if match:
+                value = match.group('text').strip()
+                break
+        else:
+            break
     return value.strip()
 
 
@@ -532,8 +641,15 @@ def prepare_markdown_session(*, user, deck: Deck | None, uploaded_file) -> Impor
     session_cards: list[dict] = []
     create_count = 0
     update_count = 0
+    unchanged_count = 0
     diff_count = 0
     has_invalid_cards = False
+    source_paths = {card.source_path for card in parsed_cards if getattr(card, 'source_path', None)}
+    source_candidates: dict[str, list[Card]] = {}
+    if source_paths:
+        for candidate in Card.objects.filter(user=user, source_path__in=source_paths).select_related('deck', 'deck__parent'):
+            source_candidates.setdefault(candidate.source_path, []).append(candidate)
+    consumed_source_ids: set = set()
 
     for index, parsed in enumerate(parsed_cards):
         parsed.deck_path = _strip_root_deck(_normalise_deck_path(parsed.deck_path), deck)
@@ -547,6 +663,7 @@ def prepare_markdown_session(*, user, deck: Deck | None, uploaded_file) -> Impor
         external = existing_map.get(parsed.external_key)
         existing_payload = None
         has_changes = False
+        fallback_card = None
         incoming_tags = list(parsed.tags)
         display_tags = incoming_tags
         field_values = _build_field_values(parsed)
@@ -554,8 +671,24 @@ def prepare_markdown_session(*, user, deck: Deck | None, uploaded_file) -> Impor
         title_value = field_values.get('title') or field_values.get('front') or parsed.front_md
         display_front = _compose_front_text(title_value, hierarchy_value)
         display_back = field_values.get('back', parsed.back_md)
+        if not external and parsed.source_path:
+            candidates = list(source_candidates.get(parsed.source_path, []))
+            unused = [candidate for candidate in candidates if candidate.id not in consumed_source_ids]
+            if len(unused) == 1:
+                fallback_card = unused[0]
+            else:
+                for candidate in unused:
+                    candidate_path = _strip_root_deck(candidate.deck.full_path().split('/'), deck)
+                    if candidate_path == parsed.deck_path:
+                        fallback_card = candidate
+                        break
+        existing_card = None
         if external and external.card.user == user:
             existing_card = external.card
+        elif fallback_card:
+            existing_card = fallback_card
+            consumed_source_ids.add(fallback_card.id)
+        if existing_card:
             display_tags = _merge_tags(existing_card.tags, incoming_tags)
             existing_payload = {
                 'card_id': str(existing_card.id),
@@ -574,13 +707,22 @@ def prepare_markdown_session(*, user, deck: Deck | None, uploaded_file) -> Impor
                 or existing_card.tags != display_tags
                 or existing_card.media != parsed.media
             )
-            update_count += 1
             if has_changes:
+                update_count += 1
                 diff_count += 1
+            else:
+                unchanged_count += 1
         else:
             existing_payload = None
             has_changes = True
             create_count += 1
+
+        diff_payload = None
+        if existing_payload and has_changes:
+            diff_payload = {
+                'front': _render_diff_rows(existing_payload['front_md'], display_front),
+                'back': _render_diff_rows(existing_payload['back_md'], display_back),
+            }
 
         session_cards.append(
             {
@@ -595,10 +737,12 @@ def prepare_markdown_session(*, user, deck: Deck | None, uploaded_file) -> Impor
                 'deck_path': parsed.deck_path,
                 'existing': existing_payload,
                 'has_changes': has_changes,
+                'unchanged': bool(existing_payload and not has_changes),
                 'card_type': parsed.card_type_slug,
                 'field_values': field_values,
                 'context': parsed.context_md,
                 'errors': card_errors,
+                'diff': diff_payload,
             }
         )
 
@@ -615,6 +759,7 @@ def prepare_markdown_session(*, user, deck: Deck | None, uploaded_file) -> Impor
             'summary': {
                 'creates': create_count,
                 'updates': update_count,
+                'unchanged': unchanged_count,
                 'conflicts': diff_count,
                 'media_copied': parse_summary.get('media_copied', 0),
                 'has_errors': has_invalid_cards,
@@ -671,10 +816,21 @@ def apply_markdown_session(session: ImportSession, *, decisions: Dict[int, str] 
         deck_cache[key] = target
         return target, created
 
+    def _unique_external_key(base_key: str) -> str:
+        key = base_key
+        counter = 0
+        while ExternalId.objects.filter(external_key=key).exists():
+            counter += 1
+            key = f"{base_key}__u{session.user_id}_{counter}"
+        return key
+
     with transaction.atomic():
         for card_data in cards_payload:
             index = card_data.get('index')
             decision = decisions.get(index, 'imported')
+            if card_data.get('unchanged'):
+                summary['skipped'] += 1
+                continue
             deck_parts = _strip_root_deck(_normalise_deck_path(card_data.get('deck_path', [])), root_deck)
             if not deck_parts:
                 if not root_deck:
@@ -698,9 +854,55 @@ def apply_markdown_session(session: ImportSession, *, decisions: Dict[int, str] 
                 field_values['context'] = card_data['context']
 
             if not existing_payload:
+                # If an external id already exists, treat this as an update instead of creating a duplicate.
+                raw_external_key = card_data['external_key']
+                existing_ext = ExternalId.objects.filter(external_key=raw_external_key).select_related('card').first()
+                if existing_ext and existing_ext.card and existing_ext.card.user_id == session.user_id:
+                    existing_card = existing_ext.card
+                    if decision in {'existing', 'skip'}:
+                        summary['skipped'] += 1
+                        continue
+                    basic_types = {'basic', 'basic_image_front', 'basic_image_back'}
+                    current_slug = existing_card.card_type.slug if existing_card.card_type else 'basic'
+                    if current_slug in basic_types and card_type_slug:
+                        existing_card.card_type = resolve_card_type(session.user, card_type_slug)
+                    existing_card.front_md = card_data['front_md']
+                    existing_card.back_md = card_data['back_md']
+                    existing_card.tags = card_data.get('tags', [])
+                    existing_card.media = card_data.get('media', [])
+                    existing_card.source_path = card_data.get('source_path')
+                    existing_card.source_anchor = card_data.get('source_anchor')
+                    existing_card.deck = target_deck
+                    existing_card.field_values = field_values
+                    existing_card.save(
+                        update_fields=[
+                            'front_md',
+                            'back_md',
+                            'tags',
+                            'media',
+                            'source_path',
+                            'source_anchor',
+                            'deck',
+                            'card_type',
+                            'field_values',
+                            'updated_at',
+                        ]
+                    )
+                    ExternalId.objects.get_or_create(
+                        card=existing_card,
+                        system='logseq',
+                        external_key=raw_external_key,
+                        defaults={'extra': {}},
+                    )
+                    summary['updated'] += 1
+                    continue
                 if decision in {'existing', 'skip'}:
                     summary['skipped'] += 1
                     continue
+                external_key = raw_external_key
+                if existing_ext and existing_ext.card and existing_ext.card.user_id != session.user_id:
+                    # Another user already owns this external id; generate a unique, user-scoped key to avoid collision.
+                    external_key = _unique_external_key(f"{raw_external_key}__u{session.user_id}")
                 card = Card.objects.create(
                     user=session.user,
                     deck=target_deck,
@@ -713,7 +915,12 @@ def apply_markdown_session(session: ImportSession, *, decisions: Dict[int, str] 
                     source_anchor=card_data.get('source_anchor'),
                     field_values=field_values,
                 )
-                ExternalId.objects.create(card=card, system='logseq', external_key=card_data['external_key'])
+                ExternalId.objects.get_or_create(
+                    card=card,
+                    system='logseq',
+                    external_key=external_key,
+                    defaults={'extra': {}},
+                )
                 summary['created'] += 1
                 continue
 
@@ -736,7 +943,11 @@ def apply_markdown_session(session: ImportSession, *, decisions: Dict[int, str] 
                     source_anchor=card_data.get('source_anchor'),
                     field_values=field_values,
                 )
-                ExternalId.objects.get_or_create(card=card, system='logseq', external_key=card_data['external_key'])
+                recovery_key = card_data['external_key']
+                conflict = ExternalId.objects.filter(external_key=recovery_key).exclude(card__user_id=session.user_id).exists()
+                if conflict:
+                    recovery_key = _unique_external_key(f"{recovery_key}__u{session.user_id}")
+                ExternalId.objects.get_or_create(card=card, system='logseq', external_key=recovery_key)
                 summary['created'] += 1
                 continue
 
@@ -769,6 +980,15 @@ def apply_markdown_session(session: ImportSession, *, decisions: Dict[int, str] 
                     'field_values',
                     'updated_at',
                 ]
+            )
+            safe_external_key = card_data['external_key']
+            if ExternalId.objects.filter(external_key=safe_external_key).exclude(card_id=existing_card.id).exists():
+                safe_external_key = _unique_external_key(f"{safe_external_key}__u{session.user_id}")
+            ExternalId.objects.get_or_create(
+                card=existing_card,
+                system='logseq',
+                external_key=safe_external_key,
+                defaults={'extra': {}},
             )
             summary['updated'] += 1
 
